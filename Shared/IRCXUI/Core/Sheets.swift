@@ -1,5 +1,6 @@
 import AppCoreUI
 import EmberKit
+import OSLog
 import SwiftUI
 
 /** Adding an instance by its address, as /server does. */
