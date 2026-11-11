@@ -75,50 +75,7 @@ struct InputLine: View {
     historyIndex = nil
     draft = ""
     focused = true
-    run(command)
-  }
-
-  private func run(_ command: InputCommand) {
-    switch command {
-    case let .say(text): room.send(text)
-    case let .me(action): room.send(action, action: true)
-    case let .join(name):
-      Task { do { try await session.join(name) } catch { room.note(error.localizedDescription, kind: .error) } }
-    case let .msg(nick, text):
-      Task {
-        do {
-          let buffer = try await session.query(nick)
-          if let text, let buffer {
-            // Its socket opens as the buffer comes on screen; send once it has.
-            for _ in 0..<50 where !buffer.isOpen { try? await Task.sleep(for: .milliseconds(100)) }
-            buffer.send(text)
-          }
-        } catch {
-          room.note(error.localizedDescription, kind: .error)
-        }
-      }
-    case .part:
-      session.selectedRoomID = nil
-    case .names:
-      let names = room.timeline.present.map(\.name).sorted().joined(separator: " ")
-      room.note("[Users \(room.room.isDirect ? room.title : "#" + room.title)] \(names)")
-    case let .whois(nick):
-      if let person = session.people.values.first(where: { $0.name.caseInsensitiveCompare(nick) == .orderedSame }) {
-        room.note("\(person.name) [\(person.role.rawValue), \(person.status.rawValue)]\(person.bio.map { " : \($0)" } ?? "")")
-      } else {
-        room.note("\(nick): No such nick", kind: .error)
-      }
-    case let .server(address):
-      if let url = Instance.baseURL(from: address) {
-        app.addInstance(at: url)
-      } else {
-        room.note("Not an address: \(address)", kind: .error)
-      }
-    case .help:
-      room.note(InputCommand.helpText)
-    case let .unknown(reason):
-      room.note(reason, kind: .error)
-    }
+    Commander.run(command, app: app, session: session, room: room)
   }
 
   /** Completes the nick being typed, as irssi does: `Ad⇥` becomes `Ada: ` at the start of the line, `Ada ` after. */

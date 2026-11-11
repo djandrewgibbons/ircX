@@ -20,6 +20,9 @@ public struct Theme: Sendable {
   public var part = Color(hex: 0xE5676B)
   public var action = Color(hex: 0xC792EA)
   public var link = Color(hex: 0x6CB6FF)
+  /** BitchX's blue status bar and its brackets. */
+  public var statusBar = Color(hex: 0x1B2A4A)
+  public var statusBracket = Color(hex: 0x5C7CBA)
 
   /** mIRC's colors, less the ones that vanish on a dark background. */
   public var nicks: [Color] = [
@@ -55,29 +58,3 @@ extension Color {
   }
 }
 
-enum Clock {
-  static func time(_ date: Date, seconds: Bool) -> String {
-    let formatter = seconds ? withSeconds : withoutSeconds
-    return formatter.string(from: date)
-  }
-
-  private static let withSeconds: DateFormatter = {
-    let f = DateFormatter()
-    f.dateFormat = "HH:mm:ss"
-    return f
-  }()
-
-  private static let withoutSeconds: DateFormatter = {
-    let f = DateFormatter()
-    f.dateFormat = "HH:mm"
-    return f
-  }()
-
-  static func day(_ date: Date) -> String {
-    date.formatted(.dateTime.weekday(.wide).day().month(.wide).year())
-  }
-}
-
-extension Int {
-  var byteText: String { ByteCountFormatter.string(fromByteCount: Int64(self), countStyle: .file) }
-}

@@ -9,6 +9,7 @@ struct ChannelSidebar: View {
   @State private var joining = false
   @State private var querying = false
   @State private var prompt = ""
+  @State private var showingSettings = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -27,6 +28,9 @@ struct ChannelSidebar: View {
       .scrollContentBackground(.hidden)
     }
     .background(theme.sidebar)
+    .sheet(isPresented: $showingSettings) {
+      NavigationStack { SettingsView().navigationTitle("Settings") }
+    }
     .alert("Join a channel", isPresented: $joining) {
       promptField("#channel")
       Button("Join") {
@@ -77,6 +81,15 @@ struct ChannelSidebar: View {
       .buttonStyle(.plain)
       .foregroundStyle(theme.dim)
       .help("Jump to… (⌘K)")
+      #if os(iOS)
+      Button {
+        showingSettings = true
+      } label: {
+        Image(systemName: "gearshape")
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(theme.dim)
+      #endif
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 12)

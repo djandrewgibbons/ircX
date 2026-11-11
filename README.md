@@ -3,8 +3,12 @@
 A native Mac, iPhone and iPad client for [Ember](https://github.com/NYLLON-SOFTWARE/ember-cloudflare),
 the team chat that runs on your own Cloudflare account. It signs in to as many Ember instances as
 you like, starting with irc.dxnd.ai, and lays them out the way Slack does: a rail of servers, each
-one's channels and DMs, the conversation, and its thread beside it. It just looks like an IRC client
-from 1999 while doing it.
+one's channels and DMs, the conversation, and its thread beside it, in one of two themes:
+
+- **Suite**, the dxnd suite's style, built on [AppCoreUI](https://github.com/djandrewgibbons/dxnd-app-core):
+  panel cards, the icon rail, glass, and messages laid out as Slack lays them out.
+- **IRC Classic**, a fixed-width throwback to the IRC client you ran in 1999: a terminal palette,
+  nicks aligned in a column, and a BitchX-blue status bar.
 
 ```
 [02:31] [@andrew] [dxnd/#general] [Act: 3,5]                              bob typing…
@@ -24,12 +28,13 @@ from 1999 while doing it.
 - **Slack habits.** Threads open beside the room (with *Also send to #room*), reactions show as
   `[👍 2]` and toggle on click, starred rooms come first, and each room's notification level is a
   right-click away.
+- **Themes.** Switch between Suite and IRC Classic in Settings.
 - **Sign in** with an email address and password, with the sign-in link from your Ember profile's QR
   code, or with just a name where the instance allows guests.
 
 ## Building
 
-Requires Xcode 16 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+Requires Xcode 26 or later (macOS 26 and iOS 26) and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```sh
 brew install xcodegen
@@ -45,7 +50,9 @@ Set your team under Signing & Capabilities (or `DEVELOPMENT_TEAM` in `project.ym
 | Path | What |
 |---|---|
 | `Sources/EmberKit` | Ember's HTTP API and WebSocket protocol in Swift: the models and frames of ember-cloudflare's `packages/protocol`, sessions, sockets that reconnect, and the timeline that applies a room's frames. No UI. |
-| `Sources/IRCXUI` | The SwiftUI app, shared by macOS and iOS: the instance rail, sidebar, buffer, thread pane, nick list and input line, and the IRC theme. |
+| `Sources/IRCXUI/Shared` | What both themes share: the app, instance and room models, the input line's commands, Settings and the sheets. |
+| `Sources/IRCXUI/Suite` | The Suite theme, on AppCoreUI. |
+| `Sources/IRCXUI/IRC` | The IRC Classic theme. |
 | `App` | The `@main` entry point both targets build. |
 | `project.yml` | The Xcode project: one macOS and one iOS target, both `ai.dxnd.ircX`. |
 

@@ -168,15 +168,15 @@ struct StatusBar: View {
       .lineLimit(1)
       .padding(.horizontal, 10)
       .frame(height: 22)
-      .background(Color(hex: 0x1B2A4A))
+      .background(theme.statusBar)
     }
   }
 
   private func segment(_ text: String, color: Color? = nil) -> some View {
     HStack(spacing: 0) {
-      Text("[").foregroundStyle(Color(hex: 0x5C7CBA))
+      Text("[").foregroundStyle(theme.statusBracket)
       Text(text).foregroundStyle(color ?? theme.text)
-      Text("]").foregroundStyle(Color(hex: 0x5C7CBA))
+      Text("]").foregroundStyle(theme.statusBracket)
     }
   }
 

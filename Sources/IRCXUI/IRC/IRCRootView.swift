@@ -2,19 +2,15 @@ import EmberKit
 import SwiftUI
 
 /**
- * Slack's layout in IRC's clothes: a rail of instances, the selected one's channels and DMs, and the
- * open buffer, with a thread or the nick list beside it. On iPhone the rail sits atop the sidebar.
+ * The IRC Classic theme: Slack's layout in IRC's clothes, a rail of instances, the selected one's
+ * channels and DMs, and the open buffer, with a thread or the nick list beside it. On iPhone the
+ * rail sits atop the sidebar.
  */
-public struct RootView: View {
+struct IRCRootView: View {
   @Bindable var app: AppModel
   @Environment(\.theme) private var theme
-  @Environment(\.horizontalSizeClass) private var sizeClass
 
-  public init(app: AppModel) {
-    self.app = app
-  }
-
-  public var body: some View {
+  var body: some View {
     Group {
       #if os(macOS)
       HStack(spacing: 0) {
@@ -30,22 +26,15 @@ public struct RootView: View {
     .foregroundStyle(theme.text)
     .preferredColorScheme(.dark)
     .tint(theme.ember)
-    .sheet(isPresented: $app.showingAddInstance) {
-      AddInstanceView(app: app)
-    }
-    .sheet(isPresented: $app.showingSwitcher) {
-      QuickSwitcher(app: app)
-    }
-    .task { await app.start() }
   }
 
   @ViewBuilder
   private var workspace: some View {
     if let session = app.selected {
-      InstanceView(app: app, session: session)
+      IRCInstanceView(app: app, session: session)
         .id(session.id)
     } else {
-      EmptyState(title: "No servers", detail: "Add an Ember instance, such as irc.dxnd.ai, with /server or the + button.") {
+      IRCEmptyState(title: "No servers", detail: "Add an Ember instance, such as irc.dxnd.ai, with /server or the + button.") {
         app.showingAddInstance = true
       }
     }
@@ -53,7 +42,7 @@ public struct RootView: View {
 }
 
 /** One instance: signing in, or its sidebar and buffer. */
-struct InstanceView: View {
+struct IRCInstanceView: View {
   let app: AppModel
   @Bindable var session: InstanceSession
   @Environment(\.theme) private var theme
@@ -69,9 +58,9 @@ struct InstanceView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(theme.buffer)
     case .signedOut:
-      SignInView(app: app, session: session)
+      IRCSignInView(app: app, session: session)
     case let .unreachable(reason):
-      EmptyState(title: "Can't reach \(session.instance.host)", detail: reason, action: "Try again") {
+      IRCEmptyState(title: "Can't reach \(session.instance.host)", detail: reason, action: "Try again") {
         Task { await session.start() }
       }
     case .ready:
@@ -83,7 +72,7 @@ struct InstanceView: View {
           BufferView(app: app, session: session, room: room)
             .id(room.id)
         } else {
-          EmptyState(title: session.name, detail: "Pick a channel, or /join #room.")
+          IRCEmptyState(title: session.name, detail: "Pick a channel, or /join #room.")
         }
       }
       .navigationSplitViewStyle(.balanced)
@@ -91,7 +80,7 @@ struct InstanceView: View {
   }
 }
 
-struct EmptyState: View {
+struct IRCEmptyState: View {
   let title: String
   let detail: String
   var action: String = "Add server"

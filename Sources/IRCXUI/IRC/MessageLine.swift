@@ -1,10 +1,5 @@
 import EmberKit
 import SwiftUI
-#if os(macOS)
-import AppKit
-#else
-import UIKit
-#endif
 
 /**
  * One line, weechat-style: the time, the nick right-aligned in its column, a bar, and the text, which
@@ -227,13 +222,3 @@ struct AttachmentView: View {
   }
 }
 
-enum Pasteboard {
-  static func copy(_ text: String) {
-    #if os(macOS)
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
-    #else
-    UIPasteboard.general.string = text
-    #endif
-  }
-}

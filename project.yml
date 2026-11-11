@@ -4,8 +4,8 @@ name: ircX
 options:
   bundleIdPrefix: ai.dxnd
   deploymentTarget:
-    macOS: "14.0"
-    iOS: "17.0"
+    macOS: "26.0"
+    iOS: "26.0"
   createIntermediateGroups: true
 packages:
   ircX:

@@ -222,4 +222,5 @@ public enum Preferences {
   public static let showJoinsParts = "showJoinsParts"
   public static let fontSize = "fontSize"
   public static let showSeconds = "showSeconds"
+  public static let theme = "theme"
 }
