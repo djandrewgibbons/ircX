@@ -43,8 +43,8 @@ struct IRCSignInView: View {
         Group {
           switch method {
           case .password:
-            field("email", text: $email, content: .emailAddress)
-            SecureField("password", text: $password).onSubmit(go)
+            field("email", text: $email, content: .emailAddress).textContentTypeEmail()
+            SecureField("password", text: $password).textContentType(.password).onSubmit(go)
           case .link:
             Text("On the web, open your profile and copy the sign-in link under its QR code.").foregroundStyle(theme.dim)
             field("https://\(session.instance.host)/session/transfers#token=…", text: $link, content: .URL)

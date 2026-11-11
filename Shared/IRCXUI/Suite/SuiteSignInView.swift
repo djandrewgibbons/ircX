@@ -30,6 +30,7 @@ struct SuiteSignInView: View {
           TextField("Email", text: $email)
             .textContentTypeEmail()
           SecureField("Password", text: $password)
+            .textContentType(.password)
             .onSubmit(go)
         case .link:
           TextField("Sign-In Link", text: $link)
@@ -101,7 +102,7 @@ enum SignInMethod: String, CaseIterable, Identifiable {
 extension View {
   func textContentTypeEmail() -> some View {
     #if os(iOS)
-    self.textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never)
+    self.textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never)
     #else
     self.textContentType(.username)
     #endif
