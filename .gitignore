@@ -60,3 +60,10 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+.build/
+.swiftpm/
+*.xcodeproj
+DerivedData/
+xcuserdata/
+macOS/Info.plist
+iOS/Info.plist

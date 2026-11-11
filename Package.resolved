@@ -1,0 +1,14 @@
+{
+  "pins" : [
+    {
+      "identity" : "dxnd-app-core",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/djandrewgibbons/dxnd-app-core",
+      "state" : {
+        "branch" : "main",
+        "revision" : "710e19c568dc5fe7e9770de8ec7e5e39852680d8"
+      }
+    }
+  ],
+  "version" : 3
+}

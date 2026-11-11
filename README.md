@@ -1,1 +1,71 @@
 # ircX
+
+A native Mac, iPhone and iPad client for [Ember](https://github.com/NYLLON-SOFTWARE/ember-cloudflare),
+the team chat that runs on your own Cloudflare account. It signs in to as many Ember instances as
+you like, starting with irc.dxnd.ai, and lays them out the way Slack does: a rail of servers, each
+one's channels and DMs, the conversation, and its thread beside it, in one of two themes:
+
+- **Suite**, the dxnd suite's style, built on [AppCoreUI](https://github.com/djandrewgibbons/dxnd-app-core):
+  panel cards, the icon rail, glass, and messages laid out as Slack lays them out.
+- **IRC Classic**, a fixed-width throwback to the IRC client you ran in 1999: a terminal palette,
+  nicks aligned in a column, and a BitchX-blue status bar.
+
+```
+[02:31] [@andrew] [dxnd/#general] [Act: 3,5]                              bob typing…
+[andrew(#general)] ▸ /me waves
+```
+
+## What it does
+
+- **Many servers at once.** Each Ember instance keeps its own session in the Keychain. ⌘1–⌘9 switch
+  between them, and ⌘K jumps to any channel or DM on any of them.
+- **Live.** Each instance's workspace socket keeps unread marks, rooms and people current, and the
+  open room's socket brings messages, edits, reactions, typing and who's here as they happen. A
+  dropped connection comes back with only what changed since.
+- **IRC habits.** `/join #room`, `/msg nick text`, `/query nick`, `/me`, `/part`, `/names`, `/whois`,
+  `/server host`; Tab completes nicks, `nick:` mentions them, ↑ recalls what you sent, ⌥↑ and ⌥↓ step
+  through windows. Joins and parts print as `-->` and `<--` lines, which Settings can hide.
+- **Slack habits.** Threads open beside the room (with *Also send to #room*), reactions show as
+  `[👍 2]` and toggle on click, starred rooms come first, and each room's notification level is a
+  right-click away.
+- **Themes.** Switch between Suite and IRC Classic in Settings.
+- **Sign in** with an email address and password, with the sign-in link from your Ember profile's QR
+  code, or with just a name where the instance allows guests.
+
+## Building
+
+Requires Xcode 26 or later (macOS 26 and iOS 26), [XcodeGen](https://github.com/yonaskolb/XcodeGen),
+and access to [dxnd-app-core](https://github.com/djandrewgibbons/dxnd-app-core), the private package
+the Suite theme is built on. `swift build` fetches it with your Git credentials; run it once before
+building in Xcode.
+
+```sh
+brew install xcodegen
+xcodegen                 # makes ircX.xcodeproj from project.yml
+open ircX.xcodeproj      # run the macOS or iOS scheme
+swift test               # EmberKit's tests, no Xcode project needed
+```
+
+Set your team under Signing & Capabilities (or `DEVELOPMENT_TEAM` in `project.yml`) to run on a device.
+
+## How it's built
+
+| Path | What |
+|---|---|
+| `Shared/EmberKit` | Ember's HTTP API and WebSocket protocol in Swift: the models and frames of ember-cloudflare's `packages/protocol`, sessions, sockets that reconnect, and the timeline that applies a room's frames. No UI. |
+| `Shared/IRCXUI/Core` | What both themes share: the app, instance and room models, the input line's commands, Settings and the sheets. |
+| `Shared/IRCXUI/Suite` | The Suite theme, on AppCoreUI. |
+| `Shared/IRCXUI/IRC` | The IRC Classic theme. |
+| `macOS`, `iOS` | Each platform's app target: its `@main` entry point, and on macOS the sandbox entitlements. |
+| `Tests` | EmberKit's tests (`swift test`). |
+| `project.yml` | The Xcode project: the `macOS` and `iOS` targets and schemes, both `ai.dxnd.ircX`. |
+
+ircX speaks to Ember exactly as Ember's own web app does, so it works with any Ember deployment,
+unchanged. Ember keeps sessions in an HttpOnly `__Host-session_token` cookie; ircX keeps each
+instance's token in the Keychain and sends it in that cookie itself, with the `Origin` and
+`Sec-Fetch-Site` headers a browser on the instance's own pages would send, which Ember checks before
+any write or socket upgrade.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
