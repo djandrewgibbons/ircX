@@ -16,8 +16,10 @@ struct SuiteRootView: View {
     HStack(spacing: 0) {
       SuiteServerRail(app: app)
       workspace
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding([.top, .bottom, .trailing], panelCardGutter)
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(panelCanvasColor)
     .toolbar {
       ToolbarItem(placement: .principal) {
@@ -50,6 +52,7 @@ struct SuiteRootView: View {
         Button("Add Server", systemImage: "plus") { app.showingAddInstance = true }
           .buttonStyle(.glassProminent)
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
       #if os(macOS)
       .panelCard()
       #endif
@@ -121,22 +124,26 @@ struct SuiteInstanceView: View {
     switch session.phase {
     case .checking:
       LoadingOcean()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         #if os(macOS)
         .panelCard()
         #endif
     case .signedOut:
       SuiteSignInView(app: app, session: session)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         #if os(macOS)
         .panelCard()
         #endif
     case let .unreachable(reason):
       ContentUnavailableView {
         Label("Can't Reach \(session.instance.host)", systemImage: "wifi.exclamationmark")
+      } description: {
+        Text(reason)
       } actions: {
         Button("Try Again", systemImage: "arrow.clockwise") { Task { await session.start() } }
           .buttonStyle(.glass)
       }
-      .help(reason)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
       #if os(macOS)
       .panelCard()
       #endif

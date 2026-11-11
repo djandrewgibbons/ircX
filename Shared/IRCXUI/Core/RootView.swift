@@ -44,6 +44,7 @@ public struct RootView: View {
       case .irc: IRCRootView(app: app)
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .environment(\.appTheme, theme)
     .sheet(isPresented: $app.showingAddInstance) {
       AddInstanceView(app: app).environment(\.appTheme, theme)

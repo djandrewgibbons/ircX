@@ -29,6 +29,7 @@ struct IRCRootView: View {
       workspace
       #endif
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(theme.buffer)
     .foregroundStyle(theme.text)
     .preferredColorScheme(.dark)
