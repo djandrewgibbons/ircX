@@ -39,6 +39,13 @@ public final class AppModel {
 
   public var selected: InstanceSession? { sessions.first { $0.id == selectedID } }
 
+  /** What the window's toolbar names: the selected server, and its open room. */
+  public var windowTitle: String {
+    guard let session = selected else { return "ircX" }
+    guard let room = session.selectedRoom else { return session.name }
+    return "\(session.name) · \(room.room.isDirect ? room.title : "#" + room.title)"
+  }
+
   public func start() async {
     await withTaskGroup(of: Void.self) { group in
       for session in sessions { group.addTask { await session.start() } }

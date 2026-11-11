@@ -15,7 +15,7 @@ public struct IRCXScene: Scene {
         #endif
     }
     #if os(macOS)
-    .windowToolbarStyle(.unifiedCompact(showsTitle: false))
+    .windowToolbarStyle(.unified(showsTitle: false))
     #endif
     .commands {
       CommandGroup(after: .newItem) {

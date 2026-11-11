@@ -9,6 +9,7 @@ import SwiftUI
  */
 struct SuiteRootView: View {
   @Bindable var app: AppModel
+  @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
     #if os(macOS)
@@ -18,6 +19,15 @@ struct SuiteRootView: View {
         .padding([.top, .bottom, .trailing], panelCardGutter)
     }
     .background(panelCanvasColor)
+    .toolbar {
+      ToolbarItem(placement: .principal) {
+        Text(app.windowTitle)
+          .font(DesignFont.body.weight(.medium))
+          .foregroundStyle(.secondary)
+      }
+      .sharedBackgroundVisibility(.hidden)
+    }
+    .toolbarBackground(SuiteTheme.ircX.accent.opacity(colorScheme == .dark ? 0.35 : 0.12), for: .windowToolbar)
     .loadingActivityBar(color: SuiteTheme.ircX.accent)
     .tracksWindowVisibility()
     .suiteTheme(.ircX)

@@ -18,6 +18,13 @@ struct IRCRootView: View {
         Divider().overlay(theme.faint)
         workspace
       }
+      .toolbar {
+        ToolbarItem(placement: .principal) {
+          Text("[\(app.windowTitle)]").font(Theme.font(12, weight: .semibold)).foregroundStyle(theme.text)
+        }
+        .sharedBackgroundVisibility(.hidden)
+      }
+      .toolbarBackground(theme.statusBar, for: .windowToolbar)
       #else
       workspace
       #endif
