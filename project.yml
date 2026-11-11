@@ -26,28 +26,28 @@ settings:
     # Set your team here, or in Xcode's Signing & Capabilities.
     DEVELOPMENT_TEAM: ""
 targets:
-  ircX-macOS:
+  macOS:
     type: application
     platform: macOS
-    sources: [App]
+    sources: [macOS]
     dependencies:
       - package: ircX
         product: IRCXUI
     settings:
       base:
-        CODE_SIGN_ENTITLEMENTS: Config/ircX.entitlements
+        CODE_SIGN_ENTITLEMENTS: macOS/ircX.entitlements
         ENABLE_HARDENED_RUNTIME: YES
     info:
-      path: Config/Info-macOS.plist
+      path: macOS/Info.plist
       properties:
         CFBundleDisplayName: ircX
         LSApplicationCategoryType: public.app-category.social-networking
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-  ircX-iOS:
+  iOS:
     type: application
     platform: iOS
-    sources: [App]
+    sources: [iOS]
     dependencies:
       - package: ircX
         product: IRCXUI
@@ -60,20 +60,18 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     info:
-      path: Config/Info-iOS.plist
+      path: iOS/Info.plist
       properties:
         CFBundleDisplayName: ircX
         UILaunchScreen: {}
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
 schemes:
-  ircX-macOS:
+  macOS:
     build:
       targets:
-        ircX-macOS: all
-    test:
-      targets: []
-  ircX-iOS:
+        macOS: all
+  iOS:
     build:
       targets:
-        ircX-iOS: all
+        iOS: all

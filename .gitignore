@@ -65,3 +65,5 @@ fastlane/test_output
 *.xcodeproj
 DerivedData/
 xcuserdata/
+macOS/Info.plist
+iOS/Info.plist

@@ -34,12 +34,15 @@ one's channels and DMs, the conversation, and its thread beside it, in one of tw
 
 ## Building
 
-Requires Xcode 26 or later (macOS 26 and iOS 26) and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+Requires Xcode 26 or later (macOS 26 and iOS 26), [XcodeGen](https://github.com/yonaskolb/XcodeGen),
+and access to [dxnd-app-core](https://github.com/djandrewgibbons/dxnd-app-core), the private package
+the Suite theme is built on. `swift build` fetches it with your Git credentials; run it once before
+building in Xcode.
 
 ```sh
 brew install xcodegen
 xcodegen                 # makes ircX.xcodeproj from project.yml
-open ircX.xcodeproj      # run ircX-macOS or ircX-iOS
+open ircX.xcodeproj      # run the macOS or iOS scheme
 swift test               # EmberKit's tests, no Xcode project needed
 ```
 
@@ -49,12 +52,13 @@ Set your team under Signing & Capabilities (or `DEVELOPMENT_TEAM` in `project.ym
 
 | Path | What |
 |---|---|
-| `Sources/EmberKit` | Ember's HTTP API and WebSocket protocol in Swift: the models and frames of ember-cloudflare's `packages/protocol`, sessions, sockets that reconnect, and the timeline that applies a room's frames. No UI. |
-| `Sources/IRCXUI/Shared` | What both themes share: the app, instance and room models, the input line's commands, Settings and the sheets. |
-| `Sources/IRCXUI/Suite` | The Suite theme, on AppCoreUI. |
-| `Sources/IRCXUI/IRC` | The IRC Classic theme. |
-| `App` | The `@main` entry point both targets build. |
-| `project.yml` | The Xcode project: one macOS and one iOS target, both `ai.dxnd.ircX`. |
+| `Shared/EmberKit` | Ember's HTTP API and WebSocket protocol in Swift: the models and frames of ember-cloudflare's `packages/protocol`, sessions, sockets that reconnect, and the timeline that applies a room's frames. No UI. |
+| `Shared/IRCXUI/Core` | What both themes share: the app, instance and room models, the input line's commands, Settings and the sheets. |
+| `Shared/IRCXUI/Suite` | The Suite theme, on AppCoreUI. |
+| `Shared/IRCXUI/IRC` | The IRC Classic theme. |
+| `macOS`, `iOS` | Each platform's app target: its `@main` entry point, and on macOS the sandbox entitlements. |
+| `Tests` | EmberKit's tests (`swift test`). |
+| `project.yml` | The Xcode project: the `macOS` and `iOS` targets and schemes, both `ai.dxnd.ircX`. |
 
 ircX speaks to Ember exactly as Ember's own web app does, so it works with any Ember deployment,
 unchanged. Ember keeps sessions in an HttpOnly `__Host-session_token` cookie; ircX keeps each
