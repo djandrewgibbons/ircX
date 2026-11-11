@@ -37,9 +37,11 @@ public final class InstanceSession: Identifiable {
   /** Whether this instance is the one on screen, whose open room has its socket connected. */
   @ObservationIgnored var isForeground = false
 
-  public var id: UUID { instance.id }
+  /** The instance's id, which never changes, kept apart from `instance` so `Identifiable` needs no main actor. */
+  public nonisolated let id: UUID
 
   init(instance: Instance, tokens: TokenStore) {
+    id = instance.id
     self.instance = instance
     api = EmberAPI(instance: instance, tokens: tokens)
   }

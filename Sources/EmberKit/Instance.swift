@@ -55,6 +55,10 @@ public struct Instance: Codable, Hashable, Sendable, Identifiable {
 public struct InstanceList: Codable, Sendable {
   public var instances: [Instance]
 
+  public init(instances: [Instance]) {
+    self.instances = instances
+  }
+
   public static let defaultsKey = "ember.instances"
 
   /** irc.dxnd.ai, which the app starts with. */
