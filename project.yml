@@ -1,0 +1,79 @@
+# The Xcode project, generated: `brew install xcodegen && xcodegen`, then open ircX.xcodeproj.
+# The app's code is the Swift package beside this file; these targets only wrap it.
+name: ircX
+options:
+  bundleIdPrefix: ai.dxnd
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+  createIntermediateGroups: true
+packages:
+  ircX:
+    path: .
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.10"
+    PRODUCT_BUNDLE_IDENTIFIER: ai.dxnd.ircX
+    PRODUCT_NAME: ircX
+    GENERATE_INFOPLIST_FILE: YES
+    INFOPLIST_KEY_CFBundleDisplayName: ircX
+    INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
+    INFOPLIST_KEY_NSHumanReadableCopyright: "Apache License 2.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CODE_SIGN_STYLE: Automatic
+    # Set your team here, or in Xcode's Signing & Capabilities.
+    DEVELOPMENT_TEAM: ""
+targets:
+  ircX-macOS:
+    type: application
+    platform: macOS
+    sources: [App]
+    dependencies:
+      - package: ircX
+        product: IRCXUI
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: Config/ircX.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+    info:
+      path: Config/Info-macOS.plist
+      properties:
+        CFBundleDisplayName: ircX
+        LSApplicationCategoryType: public.app-category.social-networking
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+  ircX-iOS:
+    type: application
+    platform: iOS
+    sources: [App]
+    dependencies:
+      - package: ircX
+        product: IRCXUI
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleLightContent
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+    info:
+      path: Config/Info-iOS.plist
+      properties:
+        CFBundleDisplayName: ircX
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+schemes:
+  ircX-macOS:
+    build:
+      targets:
+        ircX-macOS: all
+    test:
+      targets: []
+  ircX-iOS:
+    build:
+      targets:
+        ircX-iOS: all
