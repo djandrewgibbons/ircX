@@ -42,6 +42,7 @@ struct AddInstanceView: View {
       }
       .loadingActivity(checking)
     }
+    .loadingActivityBar(color: SuiteTheme.ircX.accent)
     .frame(minWidth: 400, minHeight: 180)
   }
 

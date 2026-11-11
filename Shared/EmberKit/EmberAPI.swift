@@ -48,8 +48,10 @@ public final class EmberAPI: @unchecked Sendable {
     config.httpCookieStorage = nil
     config.urlCache = nil
     config.requestCachePolicy = .reloadIgnoringLocalCacheData
-    config.waitsForConnectivity = true
+    // Fail fast, so an address that doesn't resolve says so; sockets reconnect on their own backoff.
+    config.waitsForConnectivity = false
     config.timeoutIntervalForRequest = 30
+    config.timeoutIntervalForResource = 60
     session = URLSession(configuration: config)
   }
 
