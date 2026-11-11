@@ -1,6 +1,9 @@
 import EmberKit
 import Foundation
 import Observation
+import OSLog
+
+let log = Logger(subsystem: "ai.dxnd.ircX", category: "instance")
 
 /**
  * One Ember instance the app is signed in to, as Slack holds a workspace: its session, its workspace
@@ -101,6 +104,7 @@ public final class InstanceSession: Identifiable {
     } catch EmberError.signedOut {
       phase = .signedOut
     } catch {
+      log.error("\(self.instance.host, privacy: .public) unreachable: \(error.localizedDescription, privacy: .public)")
       phase = .unreachable(error.localizedDescription)
     }
   }
