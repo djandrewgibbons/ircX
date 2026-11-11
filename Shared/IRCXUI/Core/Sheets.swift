@@ -90,7 +90,7 @@ struct AddInstanceView: View {
         app.addInstance(at: url)
         dismiss()
       } catch {
-        log.error("Adding \(url.absoluteString, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+        logger.error("Adding \(url.absoluteString, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
         self.error = "\(url.host() ?? address): \(error.localizedDescription)"
       }
     }
