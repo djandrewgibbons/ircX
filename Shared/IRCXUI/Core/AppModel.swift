@@ -57,6 +57,8 @@ public final class AppModel {
   public func addInstance(at baseURL: URL) -> InstanceSession {
     if let existing = sessions.first(where: { $0.instance.origin == Instance(baseURL: baseURL).origin }) {
       selectedID = existing.id
+      // Adding a server the app already has, but couldn't reach, tries it again.
+      if case .unreachable = existing.phase { Task { await existing.start() } }
       return existing
     }
     let session = add(Instance(baseURL: baseURL), select: true)
