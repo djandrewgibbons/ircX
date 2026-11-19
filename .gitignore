@@ -67,3 +67,4 @@ DerivedData/
 xcuserdata/
 macOS/Info.plist
 iOS/Info.plist
+.worktrees/
