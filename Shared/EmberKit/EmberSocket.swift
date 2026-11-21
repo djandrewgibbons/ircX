@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /**
  * A WebSocket to Ember that stays connected: it pings to keep the connection alive through proxies,
@@ -23,11 +24,17 @@ public final class EmberSocket {
   public var onText: ((String) -> Void)?
   /** Called with Ember's close code when it ends access, after which the socket stays closed. */
   public var onEnded: ((CloseCode) -> Void)?
+  /** Called with a huddle's close code (4005 to 4007), none of which is retried: the huddle ends, the socket stays closed. */
+  public var onHuddleEnded: ((HuddleCloseCode) -> Void)?
   /**
    * Called each time the socket drops and will connect again. Foundation reports Ember's own close codes
-   * (4001, 4003, 4004) as invalid, so owners check over HTTP whether access has ended, and `disconnect()` if so.
+   * (4001 to 4007) as invalid, so the socket reads them from the close's reason, which Ember names each
+   * by ("Full", "Moved"…); where neither says, owners check over HTTP whether access has ended, and
+   * `disconnect()` if so.
    */
   public var onDropped: (() -> Void)?
+  /** Whether the last drop came with a close frame from Ember, rather than the connection failing. */
+  public private(set) var closedByPeer = false
 
   private let makeRequest: () -> URLRequest
   private let session: URLSession
@@ -64,8 +71,8 @@ public final class EmberSocket {
     delegate.onOpen = { [weak self] in
       Task { @MainActor in self?.opened(generation: current) }
     }
-    delegate.onClose = { [weak self] code in
-      Task { @MainActor in self?.dropped(generation: current, code: code) }
+    delegate.onClose = { [weak self] code, reason, clean in
+      Task { @MainActor in self?.dropped(generation: current, code: Self.code(code, reason: reason), clean: clean) }
     }
     task.resume()
     receive(on: task, generation: current)
@@ -90,10 +97,25 @@ public final class EmberSocket {
   }
 
   @discardableResult
-  public func send(_ frame: ClientFrame) -> Bool {
-    guard let text = try? frame.encoded() else { return false }
-    return send(text)
+  public func send(_ frame: ClientFrame) -> Bool { sendFrame(frame) }
+
+  @discardableResult
+  public func send(_ frame: WorkspaceClientFrame) -> Bool { sendFrame(frame) }
+
+  @discardableResult
+  public func send(_ frame: HuddleClientFrame) -> Bool { sendFrame(frame) }
+
+  @discardableResult
+  public func sendFrame(_ frame: some SocketFrame) -> Bool {
+    do {
+      return send(try frame.encoded())
+    } catch {
+      Self.logger.error("Couldn't encode a frame: \(error.localizedDescription, privacy: .public)")
+      return false
+    }
   }
+
+  static let logger = Logger(subsystem: "ai.dxnd.ircX", category: "socket")
 
   private func opened(generation current: Int) {
     guard current == generation else { return }
@@ -124,21 +146,58 @@ public final class EmberSocket {
         case .success:
           self.receive(on: task, generation: current)
         case .failure:
-          self.dropped(generation: current, code: task.closeCode.rawValue)
+          let code = Self.code(task.closeCode.rawValue, reason: task.closeReason)
+          if Self.isKnown(code) {
+            self.dropped(generation: current, code: code, clean: true)
+            return
+          }
+          // The receive can fail before the delegate hears the close frame that says why; let it say first.
+          Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            let code = Self.code(task.closeCode.rawValue, reason: task.closeReason)
+            self?.dropped(generation: current, code: code, clean: task.closeCode != .invalid || task.closeReason != nil)
+          }
         }
       }
     }
   }
 
-  private func dropped(generation current: Int, code: Int) {
+  /** Whether `code` is one of Ember's own, which say why it closed. */
+  nonisolated static func isKnown(_ code: Int) -> Bool { CloseCode(rawValue: code) != nil || HuddleCloseCode(rawValue: code) != nil }
+
+  /**
+   * The code a socket closed with: Foundation's, where it knows it, else the one the close's reason
+   * names, as Ember's Durable Objects name each (`CLOSE_REASONS`).
+   */
+  nonisolated public static func code(_ raw: Int, reason: Data?) -> Int {
+    if isKnown(raw) { return raw }
+    guard let reason, let said = String(data: reason, encoding: .utf8) else { return raw }
+    switch said.trimmingCharacters(in: .whitespacesAndNewlines) {
+    case "Reconnect": return CloseCode.reconnect.rawValue
+    case "Revoked": return CloseCode.revoked.rawValue
+    case "NotFound": return CloseCode.notFound.rawValue
+    case "Full": return HuddleCloseCode.full.rawValue
+    case "Off": return HuddleCloseCode.off.rawValue
+    case "Moved": return HuddleCloseCode.moved.rawValue
+    default: return raw
+    }
+  }
+
+  private func dropped(generation current: Int, code: Int, clean: Bool) {
     guard current == generation else { return }
     generation += 1
+    closedByPeer = clean
     pinger?.cancel()
     task?.cancel()
     task = nil
     if let ended = CloseCode(rawValue: code), ended != .reconnect {
       state = .closed(ended)
       onEnded?(ended)
+      return
+    }
+    if let ended = HuddleCloseCode(rawValue: code) {
+      state = .closed(nil)
+      onHuddleEnded?(ended)
       return
     }
     onDropped?()
@@ -156,18 +215,23 @@ public final class EmberSocket {
 
   private final class Delegate: NSObject, URLSessionWebSocketDelegate {
     var onOpen: (() -> Void)?
-    var onClose: ((Int) -> Void)?
+    /** The close's code, its reason, and whether a close frame said them. */
+    var onClose: ((Int, Data?, Bool) -> Void)?
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
       onOpen?()
     }
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-      onClose?(closeCode.rawValue)
+      onClose?(closeCode.rawValue, reason, true)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-      onClose?((task as? URLSessionWebSocketTask)?.closeCode.rawValue ?? 1006)
+      guard let socket = task as? URLSessionWebSocketTask else {
+        onClose?(1006, nil, false)
+        return
+      }
+      onClose?(socket.closeCode.rawValue, socket.closeReason, socket.closeCode != .invalid || socket.closeReason != nil)
     }
   }
 }

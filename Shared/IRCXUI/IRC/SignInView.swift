@@ -4,73 +4,90 @@ import SwiftUI
 import UIKit
 #endif
 
-/** Signing in to an instance: with an email address and password, a sign-in link from your profile, or just a name where guests may. */
+/**
+ * Signing in to an instance under IRC Classic, as the web's sign-in page offers it: an email address and
+ * password, a sign-in link, just a name where guests may, Memberful and single sign-on (`/connect sso`),
+ * and `/register`, `/join-email` and `/reset` where the server lets people join or reset a password.
+ */
 struct IRCSignInView: View {
   let app: AppModel
   let session: InstanceSession
-  @Environment(\.theme) private var theme
-  @State private var method = Method.password
-  @State private var email = ""
-  @State private var password = ""
-  @State private var name = ""
-  @State private var link = ""
-  @State private var error: String?
-  @State private var busy = false
 
-  enum Method: String, CaseIterable, Identifiable {
-    case password = "Password"
-    case link = "Sign-in link"
-    case guest = "Just a name"
-    var id: String { rawValue }
+  var body: some View {
+    IRCSignInForm(app: app, form: session.signInForm)
   }
+}
+
+private struct IRCSignInForm: View {
+  let app: AppModel
+  @Bindable var form: SignInModel
+  @Environment(\.theme) private var theme
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
         VStack(alignment: .leading, spacing: 4) {
-          Text("*** Connecting to \(session.instance.host)").foregroundStyle(theme.dim)
-          Text("*** \(session.bootstrap?.account.name ?? session.name)").font(Theme.font(20, weight: .bold)).foregroundStyle(theme.ember)
-          if let tagline = session.bootstrap?.account.tagline, !tagline.isEmpty {
+          Text("*** Connecting to \(form.session.instance.host)").foregroundStyle(theme.dim)
+          Text("*** \(PeopleText.signInTo(form.workspace))").font(Theme.font(20, weight: .bold)).foregroundStyle(theme.ember)
+          if let tagline = form.account?.tagline, !tagline.isEmpty {
             Text("*** \(tagline)").foregroundStyle(theme.dim)
           }
         }
-        Picker("Sign in with", selection: $method) {
-          ForEach(methods) { Text($0.rawValue).tag($0) }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
+        if let notice = form.notice { Text("-!- \(notice)").foregroundStyle(theme.join) }
+        if let unreachable = form.unreachable { Text("-!- \(unreachable)").foregroundStyle(theme.part) }
 
-        Group {
-          switch method {
-          case .password:
-            field("email", text: $email, content: .emailAddress).textContentTypeEmail()
-            SecureField("password", text: $password).textContentType(.password).onSubmit(go)
-          case .link:
-            Text("On the web, open your profile and copy the sign-in link under its QR code.").foregroundStyle(theme.dim)
-            field("https://\(session.instance.host)/session/transfers#token=…", text: $link, content: .URL)
-          case .guest:
-            field("nick", text: $name, content: .nickname)
-          }
-        }
-        .textFieldStyle(.roundedBorder)
-
-        if let error {
-          Text("-!- \(error)").foregroundStyle(theme.part)
-        }
-        HStack {
-          Button(action: go) {
-            Text(busy ? "Signing in…" : "/connect").frame(minWidth: 120)
+        if let only = form.onlyElsewhere {
+          Button {
+            form.signInElsewhere(memberful: only.memberful)
+          } label: {
+            Text("/connect \(only.memberful ? "memberful" : "sso")").frame(minWidth: 160)
           }
           .buttonStyle(.borderedProminent)
-          .keyboardShortcut(.defaultAction)
-          .disabled(busy)
-          Spacer()
-          Button("Remove server", role: .destructive) { Task { await app.remove(session) } }
-            .buttonStyle(.borderless)
+          .help("Sign in with \(only.name)")
+          command("Have a password? Sign in with a password") { form.showsPasswordForm = true }
+        } else {
+          Picker("Sign in with", selection: $form.method) {
+            ForEach(form.methods) { Text($0.title).tag($0) }
+          }
+          .pickerStyle(.segmented)
+          .labelsHidden()
+          fields.textFieldStyle(.roundedBorder)
         }
-        if session.bootstrap?.signInWithMemberful == true {
-          Text("This server signs members in with Memberful, which ircX can't do yet: use a sign-in link from your profile on the web.")
-            .foregroundStyle(theme.dim)
+
+        if let problem = form.problem {
+          Text("-!- \(problem)").foregroundStyle(theme.part)
+        }
+        if let elsewhere = form.elsewhere {
+          ForEach(elsewhere.connection.connections(ssoName: form.ssoName), id: \.url) { connection in
+            command("/connect \(connection.name)") { form.connect(connection.url, name: connection.name) }
+          }
+        }
+        if form.onlyElsewhere == nil {
+          HStack {
+            Button(action: form.signIn) {
+              Text(form.busy ? "Signing in…" : "/connect").frame(minWidth: 120)
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(form.busy)
+            Spacer()
+            Button("Remove server", role: .destructive) { Task { await app.remove(form.session) } }
+              .buttonStyle(.borderless)
+          }
+        }
+        VStack(alignment: .leading, spacing: 6) {
+          ForEach(form.otherElsewhere, id: \.title) { link in
+            command("/connect \(link.memberful ? "memberful" : "sso")", help: link.title) { form.signInElsewhere(memberful: link.memberful) }
+          }
+          if form.offersReset { command("/reset", help: "Forgot your password? Reset it", action: form.openReset) }
+          if let back = form.backToElsewhere {
+            command("/connect", help: back) { form.showsPasswordForm = false }.disabled(form.busy)
+          }
+          if form.offersSignUp {
+            command("/register", help: "New here? Create an account", action: form.openSignUp)
+          } else if form.offersEmailSignUp {
+            command("/join-email", help: PeopleText.joinWithDomain(form.emailDomains), action: form.openEmailSignUp)
+          }
         }
       }
       .font(Theme.font(13))
@@ -79,16 +96,52 @@ struct IRCSignInView: View {
       .frame(maxWidth: .infinity)
     }
     .background(theme.buffer)
+    .signInSheets(form)
   }
 
-  private var methods: [Method] {
-    session.bootstrap?.guestSignIn == true ? Method.allCases : [.password, .link]
+  @ViewBuilder
+  private var fields: some View {
+    switch form.method {
+    case .password:
+      HStack {
+        field("email", text: $form.email, content: .emailAddress).textContentTypeEmail()
+        TranslationButton(key: "email_address", account: form.account, classic: true)
+      }
+      HStack {
+        SecureField("password", text: $form.password)
+          .textContentType(.password)
+          .onSubmit(form.signIn)
+          .onChange(of: form.password) { _, typed in
+            let capped = EmberRules.capped(password: typed)
+            if capped != typed { form.password = capped }
+          }
+        TranslationButton(key: "password", account: form.account, classic: true)
+      }
+    case .link:
+      Text("On the web, open your profile and copy the sign-in link under its QR code.").foregroundStyle(theme.dim)
+      field("https://\(form.session.instance.host)/session/transfers#token=…", text: $form.link, content: .URL)
+    case .guest:
+      Text("Pick the name people will see next to your messages.").foregroundStyle(theme.dim)
+      field("nick", text: $form.name, content: .nickname)
+    }
+  }
+
+  /** A link written as the command it is, with what it does beside it. */
+  private func command(_ name: String, help: String? = nil, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 8) {
+        Text(name).foregroundStyle(theme.ember)
+        if let help { Text(help).foregroundStyle(theme.dim) }
+      }
+    }
+    .buttonStyle(.plain)
+    .help(help ?? name)
   }
 
   private func field(_ prompt: String, text: Binding<String>, content: TextContent) -> some View {
     TextField(prompt, text: text)
       .autocorrectionDisabled()
-      .onSubmit(go)
+      .onSubmit(form.signIn)
       #if os(iOS)
       .textInputAutocapitalization(.never)
       .textContentType(content.ios)
@@ -107,23 +160,5 @@ struct IRCSignInView: View {
       }
     }
     #endif
-  }
-
-  private func go() {
-    busy = true
-    error = nil
-    Task {
-      defer { busy = false }
-      do {
-        switch method {
-        case .password: try await session.signIn(emailAddress: email.trimmingCharacters(in: .whitespaces), password: password)
-        case .link: try await session.signIn(transferLink: link)
-        case .guest: try await session.signIn(name: name)
-        }
-        password = ""
-      } catch {
-        self.error = error.localizedDescription
-      }
-    }
   }
 }

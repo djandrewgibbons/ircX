@@ -19,6 +19,10 @@ struct IRCRootView: View {
         workspace
       }
       .toolbar {
+        ToolbarItemGroup(placement: .navigation) {
+          Button("Back", systemImage: "chevron.backward", action: app.goBack).disabled(!app.canGoBack).help("Back (⌘[, /back)")
+          Button("Forward", systemImage: "chevron.forward", action: app.goForward).disabled(!app.canGoForward).help("Forward (⌘], /forward)")
+        }
         ToolbarItem(placement: .principal) {
           Text("[\(app.windowTitle)]").font(Theme.font(12, weight: .semibold)).foregroundStyle(theme.text)
         }
@@ -41,6 +45,12 @@ struct IRCRootView: View {
     if let session = app.selected {
       IRCInstanceView(app: app, session: session)
         .id(session.id)
+        // Going to any other page minimizes the huddle to its bar (web workspace.tsx).
+        .onChange(of: session.destination) { app.huddles.call?.setOpen(false) }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+          if let call = app.huddles.call, !call.isOpen || call.session !== session { IRCHuddleBar(call: call) }
+        }
+        .overlay(alignment: .topTrailing) { IRCHuddleInvitations(center: app.huddles, ringing: app.huddles.ringing) }
     } else {
       IRCEmptyState(title: "No servers", detail: "Add an Ember instance, such as irc.dxnd.ai, with /server or the + button.") {
         app.showingAddInstance = true
@@ -67,6 +77,8 @@ struct IRCInstanceView: View {
       .background(theme.buffer)
     case .signedOut:
       IRCSignInView(app: app, session: session)
+    case .notSetUp:
+      SetupView(session: session)
     case let .unreachable(reason):
       IRCEmptyState(title: "Can't reach \(session.instance.host)", detail: reason, action: "Try again") {
         Task { await session.start() }
@@ -76,12 +88,22 @@ struct IRCInstanceView: View {
         ChannelSidebar(app: app, session: session)
           .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
       } detail: {
-        if let room = session.selectedRoom {
-          BufferView(app: app, session: session, room: room)
-            .id(room.id)
-        } else {
-          IRCEmptyState(title: session.name, detail: "Pick a channel, or /join #room.")
+        VStack(spacing: 0) {
+          InstanceNotices(app: app, session: session)
+          if let call = app.huddles.call, call.session === session, call.isOpen {
+            IRCHuddleView(app: app, call: call)
+          } else if let page = session.page {
+            SessionPageView(session: session, page: page)
+          } else if let room = session.selectedRoom {
+            BufferView(app: app, session: session, room: room)
+              .id(room.id)
+          } else if !session.sidebarLoaded {
+            SidebarLoadingState(session: session)
+          } else {
+            IRCEmptyState(title: NavigationText.noRoomsYet, detail: "/join #room, or /newroom #name.")
+          }
         }
+        .instanceSheets(session, app: app)
       }
       .navigationSplitViewStyle(.balanced)
     }

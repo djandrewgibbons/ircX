@@ -12,16 +12,44 @@ struct MessageLine: View {
   let openThread: (String) -> Void
   var inThread = false
   @Environment(\.theme) private var theme
+  @Environment(\.openURL) private var openURL
   @AppStorage(Preferences.fontSize) private var fontSize = 13.0
   @AppStorage(Preferences.showSeconds) private var showSeconds = false
   @State private var hovering = false
+  /** A blocked person's message, shown anyway after a click. */
+  @State private var shownAnyway = false
+  /** Your boost whose delete button shows, after a click on it. */
+  @State private var revealed: String?
 
   private static let nickWidth: CGFloat = 112
 
   var body: some View {
+    lineContent
+      // Shown anyway only while blocked: blocking again collapses it again (web `message-item.tsx`).
+      .onChange(of: blocked) { _, nowBlocked in
+        if shownAnyway && !nowBlocked { shownAnyway = false }
+      }
+  }
+
+  /** Whether this line is a blocked person's message. */
+  private var blocked: Bool {
+    if case let .message(message, _) = line { return room.isCollapsed(message) }
+    return false
+  }
+
+  @ViewBuilder private var lineContent: some View {
     switch line {
     case let .message(message, pending):
-      messageRow(message, pending: pending)
+      if room.isCollapsed(message) && !shownAnyway {
+        row(date: message.createdDate, nick: Text("*").foregroundStyle(theme.dim)) {
+          Button(EmberText.blockedMessage) { shownAnyway = true }
+            .buttonStyle(.plain)
+            .foregroundStyle(theme.dim)
+            .italic()
+        }
+      } else {
+        messageRow(message, pending: pending)
+      }
     case let .event(_, date, text, kind):
       row(date: date, nick: Text(eventMark(kind)).foregroundStyle(eventColor(kind))) {
         Text(text).foregroundStyle(kind == .error ? theme.part : theme.dim)
@@ -31,29 +59,62 @@ struct MessageLine: View {
 
   private func messageRow(_ message: Message, pending: Bool) -> some View {
     let mine = message.creator.id == session.me?.id
-    let highlighted = !mine && session.me.map { message.mentions($0.id) } == true
+    // Any message that mentions you, yours too, as the web marks them.
+    let highlighted = session.me.map { message.mentions($0.id) } == true
+    let blocks = message.attachment != nil || message.huddle != nil ? [] : RichLayout.blocks(message.body, plainText: message.plainText, host: session.instance.host)
     return VStack(alignment: .leading, spacing: 2) {
-      if message.isAction {
+      if message.deleted == true {
+        // A deleted message keeps its place for its replies, saying so without its author or time (web `DeletedMessage`).
+        row(date: nil, nick: Text("")) {
+          Text(EmberText.messageDeleted).foregroundStyle(theme.dim).italic()
+        }
+      } else if let huddle = message.huddle {
+        row(date: message.createdDate, nick: Text("*").foregroundStyle(theme.join)) {
+          IRCHuddle(session: session, message: message, huddle: huddle)
+        }
+      } else if message.isAction {
         row(date: message.createdDate, nick: Text("*").foregroundStyle(theme.action)) {
           (Text(message.creator.name).foregroundStyle(theme.nick(message.creator.id)).bold()
             + Text(" " + MessageBody.actionText(plainText: message.plainText, author: message.creator.name)).foregroundStyle(theme.action))
             .italic()
         }
+      } else if blocks == nil {
+        // A body that can't be shown (web `UnrenderableMessage`).
+        row(date: message.createdDate, nick: Text("-!-").foregroundStyle(theme.part)) {
+          Text(Display.failedToLoad).foregroundStyle(theme.part)
+        }
       } else {
-        row(date: message.createdDate, nick: nick(message.creator, mine: mine)) {
-          VStack(alignment: .leading, spacing: 4) {
-            if let parentText = message.parentText, message.parentId != nil, !inThread {
-              Text("↳ re: \(parentText)").foregroundStyle(theme.dim).lineLimit(1)
+        row(date: message.createdDate, nick: nick(message.creator, mine: mine), whois: message.creator.id) {
+          VStack(alignment: .leading, spacing: 2) {
+            if let parentId = message.parentId, !inThread {
+              Button {
+                openThread(parentId)
+              } label: {
+                Text("\u{21B3} replied to a thread: \(message.parentText.flatMap { $0.isEmpty ? nil : $0 } ?? EmberText.messageDeleted)")
+                  .foregroundStyle(theme.dim)
+                  .lineLimit(1)
+              }
+              .buttonStyle(.plain)
+            } else if message.parentId != nil, inThread, message.alsoSent == true {
+              Text("\u{21B3} also sent \(room.room.isDirect ? "as direct message" : "to #" + room.title)").foregroundStyle(theme.dim).lineLimit(1)
             }
-            if message.deleted == true {
-              Text("(message deleted)").foregroundStyle(theme.dim).italic()
+            if let upload = room.uploads[message.clientMessageId], pending {
+              // An upload's card, as a line that changes as it goes (web `UploadCard`).
+              Text("-- \(upload.error == nil ? "Uploading" : "Upload failed:") \(upload.name) (\(UploadWords.size(upload.size)))\(upload.error.map { " \($0)" } ?? " \(upload.percent)%")")
+                .foregroundStyle(upload.error == nil ? theme.dim : theme.part)
             } else if let file = message.attachment {
-              AttachmentView(session: session, file: file)
-            } else {
-              LinkedText(text: message.plainText, mentions: message.mentions, me: session.me?.id)
+              IRCAttachment(session: session, file: file)
+            } else if let blocks, !message.body.isEmpty || message.cards == nil {
+              IRCMessageBody(session: session, blocks: blocks, mentions: message.mentions)
+            }
+            if let cards = message.cards, !cards.isEmpty {
+              IRCBotCards(session: session, cards: cards, onAction: pending ? nil : { action in await room.click(action, on: message) })
             }
             if message.editedAt != nil {
               Text("(edited)").font(Theme.font(fontSize - 3)).foregroundStyle(theme.dim)
+            }
+            if pending && room.isFailed(message) {
+              Text("(\(EmberText.notSent.lowercased()))").font(Theme.font(fontSize - 3)).foregroundStyle(theme.part)
             }
           }
         }
@@ -66,32 +127,40 @@ struct MessageLine: View {
       if highlighted { Rectangle().fill(theme.ember).frame(width: 2) }
     }
     .onHover { hovering = $0 }
-    .contextMenu { menu(message, mine: mine) }
+    .contextMenu { if !pending, message.deleted != true { menu(message, mine: mine) } }
   }
 
   @ViewBuilder
   private func extras(_ message: Message) -> some View {
-    let reactions = Dictionary(grouping: message.boosts, by: \.content).sorted { $0.value.count > $1.value.count }
-    if !reactions.isEmpty || (message.thread != nil && !inThread) {
+    if !message.boosts.isEmpty || (message.thread != nil && !inThread) {
       HStack(spacing: 6) {
-        ForEach(reactions, id: \.key) { reaction in
-          let content = reaction.key
-          let boosts = reaction.value
-          let mine = boosts.contains { $0.booster.id == session.me?.id }
+        // A boost each, oldest first, as the web's pills; your own takes itself back after a second click.
+        ForEach(message.boosts) { boost in
+          let mine = boost.booster.id == session.me?.id
+          let booster = session.people[boost.booster.id]?.name ?? boost.booster.name
           Button {
-            room.react(content, to: message)
+            if mine { revealed = revealed == boost.id ? nil : boost.id }
           } label: {
-            Text("[\(content) \(boosts.count)]")
-              .foregroundStyle(mine ? theme.ember : theme.dim)
+            Text("[\(boost.content) \(booster)]").foregroundStyle(mine ? theme.ember : theme.dim)
           }
           .buttonStyle(.plain)
-          .help(boosts.map(\.booster.name).joined(separator: ", "))
+          .disabled(!mine)
+          .help("\(booster) boosted \(boost.content)")
+          if revealed == boost.id {
+            Button("[-]") {
+              revealed = nil
+              room.unboost(boost)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(theme.part)
+            .help("Delete this boost")
+          }
         }
         if let thread = message.thread, !inThread {
           Button {
             openThread(message.id)
           } label: {
-            Text("└─ \(thread.count) \(thread.count == 1 ? "reply" : "replies") · \(thread.people.map(\.name).joined(separator: ", "))")
+            Text("\u{2514}\u{2500} \(MessageWords.replies(thread.count)) \u{B7} \(thread.people.map { session.people[$0.id]?.name ?? $0.name }.joined(separator: ", "))\(lastReply(thread))")
               .foregroundStyle(theme.link)
           }
           .buttonStyle(.plain)
@@ -103,17 +172,30 @@ struct MessageLine: View {
     }
   }
 
+  private func lastReply(_ thread: ThreadSummary) -> String {
+    guard let latest = EmberDate.parse(thread.latestAt) else { return "" }
+    return " \u{B7} last reply \(MessageWords.lastReply(latest))"
+  }
+
   private var timeWidth: CGFloat { showSeconds ? 64 : 42 }
 
-  private func row<Content: View>(date: Date, nick: Text, @ViewBuilder text: () -> Content) -> some View {
+  private func row<Content: View>(date: Date?, nick: Text, whois: UserID? = nil, @ViewBuilder text: () -> Content) -> some View {
     HStack(alignment: .firstTextBaseline, spacing: 8) {
-      Text(Clock.time(date, seconds: showSeconds))
+      Text(date.map { Clock.time($0, seconds: showSeconds) } ?? "")
         .foregroundStyle(theme.dim)
         .frame(width: timeWidth, alignment: .leading)
-      nick
-        .lineLimit(1)
-        .truncationMode(.head)
-        .frame(width: Self.nickWidth, alignment: .trailing)
+      // A click on the nick opens their page, as /whois does.
+      Button {
+        if let whois { session.show(.person(whois)) }
+      } label: {
+        nick
+          .lineLimit(1)
+          .truncationMode(.head)
+      }
+      .buttonStyle(.plain)
+      .disabled(whois == nil)
+      .help(whois == nil ? "" : "/whois")
+      .frame(width: Self.nickWidth, alignment: .trailing)
       Text("│").foregroundStyle(theme.faint)
       text()
         .textSelection(.enabled)
@@ -149,76 +231,42 @@ struct MessageLine: View {
 
   @ViewBuilder
   private func menu(_ message: Message, mine: Bool) -> some View {
-    if !inThread, message.parentId == nil {
-      Button("Reply in thread") { openThread(message.id) }
+    let context = MessageAction.Context(mine: mine, administrator: session.me?.administrator == true, inThread: inThread)
+    let name = session.people[message.creator.id]?.name ?? message.creator.name
+    if !inThread {
+      Button("Reply in thread") { openThread(message.parentId ?? message.id) }
     }
-    Menu("React") {
-      ForEach(["👍", "❤️", "😂", "🎉", "👀", "🔥"], id: \.self) { emoji in
-        Button(emoji) { room.react(emoji, to: message) }
+    if message.huddle == nil {
+      Menu("React") {
+        ForEach(Reactions.all, id: \.emoji) { reaction in
+          Button("\(reaction.emoji) \(reaction.name)") { room.react(reaction.emoji, to: message) }
+        }
+        Divider()
+        Button("New boost\u{2026}") { room.request = .boost(message) }
       }
     }
-    Button("Copy text") { Pasteboard.copy(message.plainText) }
-    Button("Copy nick") { Pasteboard.copy(message.creator.name) }
-    if mine || session.me?.administrator == true {
+    ForEach(MessageAction.menu(for: message, context), id: \.self) { action in
+      switch action {
+      case .quote: Button("Quote") { room.quote(message, into: room.composer(thread: inThread ? room.thread?.parentId : nil)) }
+      case .copyText:
+        Button("Copy text") { Pasteboard.copy(message.plainText) }
+        Button("Copy nick") { Pasteboard.copy(name) }
+      case .copyLink:
+        Button("Copy link") { Pasteboard.copy(room.permalink(message)) }
+        Divider()
+      case .block:
+        let blocked = session.isBlocked(message.creator.id)
+        Button(blocked ? "Unblock \(name)" : "Block \(name)") { room.setBlocked(!blocked, message.creator.id) }
+      case .report: Button("Report message") { room.request = .report(message) }
+      case .edit: Button("Edit message") { room.request = .editLine(message, inThread: inThread) }
+      case .delete: Button("Delete message", role: .destructive) { room.request = .delete(message) }
+      default: EmptyView()
+      }
+    }
+    if let file = message.attachment {
       Divider()
-      Button("Delete", role: .destructive) { room.delete(message) }
+      Button("Download \(file.name)") { openURL(session.api.url(file.downloadUrl)) }
+      ShareLink("Share \(file.name)", item: session.api.url(file.url))
     }
   }
 }
-
-/** Plain text with links and mentions of you picked out. */
-struct LinkedText: View {
-  let text: String
-  let mentions: [User]
-  let me: UserID?
-  @Environment(\.theme) private var theme
-
-  var body: some View {
-    Text(attributed)
-  }
-
-  private var attributed: AttributedString {
-    var string = AttributedString(text)
-    if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
-      for match in detector.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
-        guard let url = match.url, let range = Range(match.range, in: text), let attributedRange = Range(range, in: string) else { continue }
-        string[attributedRange].link = url
-        string[attributedRange].swiftUI.foregroundColor = theme.link
-        string[attributedRange].swiftUI.underlineStyle = .single
-      }
-    }
-    for person in mentions {
-      var searchRange = string.startIndex..<string.endIndex
-      while let found = string[searchRange].range(of: person.name) {
-        string[found].swiftUI.foregroundColor = person.id == me ? theme.ember : theme.nick(person.id)
-        string[found].inlinePresentationIntent = .stronglyEmphasized
-        searchRange = found.upperBound..<string.endIndex
-      }
-    }
-    return string
-  }
-}
-
-struct AttachmentView: View {
-  let session: InstanceSession
-  let file: StoredFile
-  @Environment(\.theme) private var theme
-  @Environment(\.openURL) private var openURL
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Button {
-        openURL(session.api.url(file.downloadUrl))
-      } label: {
-        Text("[file] \(file.name) (\(file.byteSize.byteText))").foregroundStyle(theme.link).underline()
-      }
-      .buttonStyle(.plain)
-      if let preview = file.previewUrl ?? (file.isImage ? file.url : nil) {
-        AuthImage(api: session.api, path: preview)
-          .frame(maxWidth: 360, maxHeight: 240, alignment: .leading)
-          .clipShape(RoundedRectangle(cornerRadius: 4))
-      }
-    }
-  }
-}
-

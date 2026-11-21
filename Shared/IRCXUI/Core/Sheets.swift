@@ -69,7 +69,8 @@ struct AddInstanceView: View {
   }
 
   private var addressField: some View {
-    TextField("Address", text: $address, prompt: Text("irc.dxnd.ai"))
+    TextField("Address", text: $address, prompt: Text("irc.dxnd.ai, or a link"))
+      .help("A server's address, or a link from it: a join link, an invitation, a sign-in link or a setup link.")
       .autocorrectionDisabled()
       #if os(iOS)
       .textInputAutocapitalization(.never)
@@ -78,18 +79,20 @@ struct AddInstanceView: View {
       .onSubmit(add)
   }
 
+  /** Adds the server an address or a pasted link names, then follows the link: a join link, an invitation, a sign-in link. */
   private func add() {
-    guard let url = Instance.baseURL(from: address) else {
+    guard let link = EmberLink.parse(address) else {
       error = "That isn't an address."
       return
     }
+    let url = link.baseURL
     checking = true
     Task {
       defer { checking = false }
       // Check it's Ember before keeping it.
       do {
         _ = try await EmberAPI(instance: Instance(baseURL: url), tokens: MemoryTokenStore()).bootstrap()
-        app.addInstance(at: url)
+        app.follow(link)
         dismiss()
       } catch {
         logger.error("Adding \(url.absoluteString, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
@@ -107,9 +110,10 @@ struct QuickSwitcher: View {
   @Environment(\.theme) private var irc
   @State private var query = ""
   @State private var highlighted = 0
+  @State private var linkFailure: String?
 
   private var matches: [(session: InstanceSession, room: SidebarRoom)] {
-    let all = app.allRooms.sorted { a, b in a.room.unread && !b.room.unread }
+    let all = app.allRooms.sorted { a, b in a.session.isMarkedUnread(a.room) && !b.session.isMarkedUnread(b.room) }
     guard !query.isEmpty else { return Array(all.prefix(30)) }
     let q = query.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "#@ "))
     return all.filter { $0.session.title(of: $0.room.room).lowercased().contains(q) || $0.session.name.lowercased().contains(q) }
@@ -125,7 +129,7 @@ struct QuickSwitcher: View {
         } else {
           Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
         }
-        TextField(look == .irc ? "goto" : "Jump To", text: $query)
+        TextField(look == .irc ? "goto" : "Jump To", text: $query, prompt: Text(look == .irc ? "goto, or paste a link" : "Jump To, or paste a link"))
           .textFieldStyle(.plain)
           .onSubmit { pick(highlighted) }
           #if os(macOS)
@@ -135,9 +139,15 @@ struct QuickSwitcher: View {
       }
       .padding(Spacing.lg)
       Divider()
+      if isLink {
+        Text(linkFailure ?? "Return opens the link.")
+          .foregroundStyle(linkFailure == nil ? Color.secondary : SemanticColor.warning)
+          .padding(Spacing.lg)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 0) {
-          ForEach(Array(matches.enumerated()), id: \.offset) { index, match in
+          ForEach(Array((isLink ? [] : matches).enumerated()), id: \.offset) { index, match in
             row(match, highlighted: index == highlighted)
               .contentShape(Rectangle())
               .onTapGesture { pick(index) }
@@ -150,7 +160,10 @@ struct QuickSwitcher: View {
     .frame(minWidth: 460)
     .background(look == .irc ? irc.sidebar : Color.clear)
     .preferredColorScheme(look == .irc ? .dark : nil)
-    .onChange(of: query) { highlighted = 0 }
+    .onChange(of: query) {
+      highlighted = 0
+      linkFailure = nil
+    }
   }
 
   private func row(_ match: (session: InstanceSession, room: SidebarRoom), highlighted: Bool) -> some View {
@@ -160,7 +173,7 @@ struct QuickSwitcher: View {
       } else {
         Image(systemName: match.room.room.symbol).foregroundStyle(.secondary).frame(width: PaneGrid.iconColumn)
       }
-      Text(match.session.title(of: match.room.room)).fontWeight(match.room.unread ? .semibold : .regular)
+      Text(match.session.title(of: match.room.room)).fontWeight(match.session.isMarkedUnread(match.room) ? .semibold : .regular)
       Spacer()
       Text(match.session.name).foregroundStyle(.secondary)
     }
@@ -169,7 +182,18 @@ struct QuickSwitcher: View {
     .background(highlighted ? (look == .irc ? irc.ember.opacity(0.22) : Color.accentColor.opacity(0.18)) : Color.clear)
   }
 
+  /** Whether what's typed is a link, such as a pasted permalink, which Return opens. */
+  private var isLink: Bool { query.contains("://") }
+
   private func pick(_ index: Int) {
+    if isLink {
+      if app.openLink(query) {
+        dismiss()
+      } else {
+        linkFailure = "No server here opens that link."
+      }
+      return
+    }
     let list = matches
     guard list.indices.contains(index) else { return }
     app.open(list[index].room.id, in: list[index].session)

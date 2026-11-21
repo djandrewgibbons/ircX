@@ -14,7 +14,7 @@ struct InstanceRail: View {
         .contextMenu {
           Text(session.instance.host)
           if session.phase == .ready {
-            Button("Sign out") { Task { await session.signOut() } }
+            Button("Sign out") { session.attempt("Signing out") { try await session.signOut() } }
           }
           Button("Remove server", role: .destructive) { Task { await app.remove(session) } }
         }

@@ -1,24 +1,67 @@
 import Foundation
 
+/** What Ember answers a failure with: `{ "error", "field"?, "redirect"?, "signIn"?, "client"? }` and its status. */
+public struct EmberProblem: Sendable, Equatable {
+  public var status: Int
+  public var message: String
+  /** The form field the message is about, such as `emailAddress` or `code`. */
+  public var field: String?
+  /** A page to go to, such as `/session/new?email_address=<address>` after "has an account already". */
+  public var redirect: String?
+  /** An app needs signing in to its server first (`AppRefused.signIn`). */
+  public var signIn: Bool
+  /** An app's server needs a client ID (`AppRefused.client`). */
+  public var client: Bool
+
+  public init(status: Int, message: String, field: String? = nil, redirect: String? = nil, signIn: Bool = false, client: Bool = false) {
+    self.status = status
+    self.message = message
+    self.field = field
+    self.redirect = redirect
+    self.signIn = signIn
+    self.client = client
+  }
+}
+
 public enum EmberError: Error, LocalizedError, Equatable {
-  /** Ember answered with a problem: `{ "error": "..." }` and its status. */
-  case problem(status: Int, message: String)
+  /** Ember answered with a problem. */
+  case problem(EmberProblem)
   /** The session is gone or was never there: sign in again. */
   case signedOut
   /** Sign-in worked, but Ember gave no session cookie to keep. */
   case noSession
+  /** The password was right, but the workspace now signs people in elsewhere: connect an account there. */
+  case connectElsewhere(ElsewhereConnection, ssoName: String)
   case notEmber
+  /** An answer that didn't decode as the protocol says, naming what didn't. */
+  case undecodable(String)
   case transport(String)
+
+  public static func refused(_ status: Int, _ message: String) -> EmberError { .problem(EmberProblem(status: status, message: message)) }
 
   public var errorDescription: String? {
     switch self {
-    case let .problem(_, message): message
+    case let .problem(problem): problem.message
     case .signedOut: "Signed out. Sign in again."
     case .noSession: "Ember didn't start a session."
+    case let .connectElsewhere(connection, ssoName): EmberText.nowUses(connection.connections(ssoName: ssoName).map(\.name))
     case .notEmber: "That address doesn't answer like Ember."
+    case let .undecodable(detail): "Ember's answer didn't make sense: \(detail)"
     case let .transport(text): text
     }
   }
+
+  /** The problem Ember answered with, if it did. */
+  public var problem: EmberProblem? {
+    if case let .problem(problem) = self { return problem }
+    return nil
+  }
+}
+
+/** What `POST /api/session` with a password answers: signed in, or where to connect an account. */
+public enum PasswordSignInAnswer: Sendable {
+  case signedIn(Me)
+  case elsewhere(ElsewhereStart)
 }
 
 /**
@@ -30,6 +73,12 @@ public final class EmberAPI: @unchecked Sendable {
   public let instance: Instance
   public let tokens: TokenStore
   public let session: URLSession
+
+  /** How long a model is given to answer, for the calls that ask one (Ember AI's setup, agents, trials). */
+  public static let modelTimeout: TimeInterval = 120
+
+  /** The `Accept` that takes any answer, for images and files. */
+  static let anyType = "\u{2A}/\u{2A}"
 
   public static let userAgent: String = {
     #if os(iOS)
@@ -51,7 +100,8 @@ public final class EmberAPI: @unchecked Sendable {
     // Fail fast, so an address that doesn't resolve says so; sockets reconnect on their own backoff.
     config.waitsForConnectivity = false
     config.timeoutIntervalForRequest = 30
-    config.timeoutIntervalForResource = 60
+    // Long enough for an upload's part or a model's answer, which set their own request timeouts.
+    config.timeoutIntervalForResource = 600
     session = URLSession(configuration: config)
   }
 
@@ -63,13 +113,15 @@ public final class EmberAPI: @unchecked Sendable {
 
   public func url(_ path: String) -> URL {
     if let absolute = URL(string: path), absolute.scheme != nil { return absolute }
-    return URL(string: path, relativeTo: instance.baseURL)!.absoluteURL
+    guard let url = URL(string: path, relativeTo: instance.baseURL) else { preconditionFailure("Unaddressable path \(path)") }
+    return url.absoluteURL
   }
 
   /** A request to `path` carrying this instance's session and the headers that say it's from Ember itself. */
-  public func request(_ path: String, method: String = "GET") -> URLRequest {
+  public func request(_ path: String, method: String = "GET", timeout: TimeInterval? = nil) -> URLRequest {
     var request = URLRequest(url: url(path))
     request.httpMethod = method
+    if let timeout { request.timeoutInterval = timeout }
     request.setValue("application/json", forHTTPHeaderField: "Accept")
     request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
     request.setValue(instance.origin, forHTTPHeaderField: "Origin")
@@ -78,10 +130,10 @@ public final class EmberAPI: @unchecked Sendable {
     return request
   }
 
-  /** The room or workspace socket at `path`, as an upgrade request from the app's own origin. */
+  /** The room, workspace or huddle socket at `path`, as an upgrade request from the app's own origin. */
   public func socketRequest(_ path: String) -> URLRequest {
     var request = request(path)
-    var parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+    guard let address = request.url, var parts = URLComponents(url: address, resolvingAgainstBaseURL: false) else { preconditionFailure("Unaddressable socket \(path)") }
     parts.scheme = instance.isSecure ? "wss" : "ws"
     request.url = parts.url
     request.setValue(nil, forHTTPHeaderField: "Accept")
@@ -105,21 +157,44 @@ public final class EmberAPI: @unchecked Sendable {
     if http.statusCode == 401, isSignedIn, request.url?.path != "/api/session" {
       throw EmberError.signedOut
     }
-    guard (200..<300).contains(http.statusCode) || http.statusCode == 304 else {
-      let message = (try? JSONDecoder().decode(Problem.self, from: data))?.error ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
-      throw EmberError.problem(status: http.statusCode, message: message)
-    }
+    guard (200..<300).contains(http.statusCode) else { throw Self.problem(status: http.statusCode, data: data) }
     return (data, http)
+  }
+
+  /** The problem in a failure's body, or the status's own words when it has none (`ApiError`). */
+  static func problem(status: Int, data: Data) -> EmberError {
+    struct Body: Decodable {
+      let error: String?
+      let field: String?
+      let redirect: String?
+      let signIn: Bool?
+      let client: Bool?
+    }
+    let fallback = "Request failed (\(status))"
+    guard !data.isEmpty else { return .refused(status, fallback) }
+    do {
+      let body = try JSONDecoder().decode(Body.self, from: data)
+      guard let message = body.error else { return .refused(status, fallback) }
+      return .problem(EmberProblem(status: status, message: message, field: body.field, redirect: body.redirect, signIn: body.signIn == true, client: body.client == true))
+    } catch {
+      // An HTML failure page, such as a proxy's: the status says what happened, as the web's `dataOf` does.
+      return .refused(status, fallback)
+    }
   }
 
   public func get<T: Decodable>(_ path: String, as type: T.Type = T.self) async throws -> T {
     let (data, _) = try await send(request(path))
-    return try decode(data)
+    return try decode(data, from: path)
   }
 
-  public func write<T: Decodable>(_ method: String, _ path: String, json body: some Encodable, as type: T.Type = T.self) async throws -> T {
-    let (data, _) = try await send(jsonRequest(method, path, body))
-    return try decode(data)
+  public func write<T: Decodable>(_ method: String, _ path: String, json body: some Encodable, timeout: TimeInterval? = nil, as type: T.Type = T.self) async throws -> T {
+    let (data, _) = try await send(jsonRequest(method, path, body, timeout: timeout))
+    return try decode(data, from: path)
+  }
+
+  public func write<T: Decodable>(_ method: String, _ path: String, as type: T.Type = T.self) async throws -> T {
+    let (data, _) = try await send(request(path, method: method))
+    return try decode(data, from: path)
   }
 
   public func perform(_ method: String, _ path: String) async throws {
@@ -130,18 +205,38 @@ public final class EmberAPI: @unchecked Sendable {
     try await send(jsonRequest(method, path, body))
   }
 
-  private func jsonRequest(_ method: String, _ path: String, _ body: some Encodable) throws -> URLRequest {
-    var request = request(path, method: method)
+  func jsonRequest(_ method: String, _ path: String, _ body: some Encodable, timeout: TimeInterval? = nil) throws -> URLRequest {
+    var request = request(path, method: method, timeout: timeout)
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.httpBody = try JSONEncoder().encode(body)
     return request
   }
 
-  private func decode<T: Decodable>(_ data: Data) throws -> T {
+  /** A multipart form, as the web sends forms that carry a photo. */
+  public func formRequest(_ method: String, _ path: String, form: MultipartForm, timeout: TimeInterval? = nil) -> URLRequest {
+    var request = request(path, method: method, timeout: timeout)
+    request.setValue("multipart/form-data; boundary=\(form.boundary)", forHTTPHeaderField: "Content-Type")
+    request.httpBody = form.body
+    return request
+  }
+
+  func decode<T: Decodable>(_ data: Data, from path: String) throws -> T {
     do {
       return try JSONDecoder().decode(T.self, from: data)
+    } catch let error as DecodingError {
+      throw EmberError.undecodable("\(path): \(Self.describe(error))")
     } catch {
-      throw EmberError.notEmber
+      throw EmberError.undecodable("\(path): \(error.localizedDescription)")
+    }
+  }
+
+  static func describe(_ error: DecodingError) -> String {
+    func path(_ context: DecodingError.Context) -> String { context.codingPath.map(\.stringValue).joined(separator: ".") }
+    switch error {
+    case let .keyNotFound(key, context): return "\(path(context)).\(key.stringValue) is missing"
+    case let .typeMismatch(_, context), let .valueNotFound(_, context), let .dataCorrupted(context):
+      return "\(path(context)): \(context.debugDescription)"
+    @unknown default: return error.localizedDescription
     }
   }
 
@@ -151,75 +246,51 @@ public final class EmberAPI: @unchecked Sendable {
     tokens.setToken(value.isEmpty ? nil : value, for: instance.id)
   }
 
-  // MARK: - Ember's API
-
-  public func bootstrap() async throws -> Bootstrap {
-    try await get("/api/bootstrap")
-  }
-
-  public func signIn(emailAddress: String, password: String) async throws -> Me {
-    let answer: SignedIn = try await write("POST", "/api/session", json: ["emailAddress": emailAddress, "password": password])
-    guard isSignedIn else { throw EmberError.noSession }
-    return answer.user
-  }
-
-  /** Signs in with just a name, where the instance lets guests in (`Bootstrap.guestSignIn`). */
-  public func signIn(name: String) async throws -> Me {
-    let answer: SignedIn = try await write("POST", "/api/session", json: ["name": name])
-    guard isSignedIn else { throw EmberError.noSession }
-    return answer.user
-  }
-
-  /**
-   * Signs in with a sign-in link from someone's profile, such as `https://irc.dxnd.ai/session/transfers#token=abc`,
-   * which the QR code there holds.
-   */
-  public func signIn(transferLink: String) async throws -> Me {
-    guard let id = SessionCookie.transferId(in: transferLink) else { throw EmberError.problem(status: 422, message: "That isn't a sign-in link.") }
-    let answer: SignedIn = try await write("POST", "/api/session/transfers", json: ["transferId": id])
-    guard isSignedIn else { throw EmberError.noSession }
-    return answer.user
-  }
-
-  public func signOut() async {
-    try? await perform("DELETE", "/api/session")
-    tokens.setToken(nil, for: instance.id)
-  }
-
-  public func sidebar() async throws -> Sidebar { try await get("/api/sidebar") }
-  public func directory() async throws -> Directory { try await get("/api/users") }
-  public func people() async throws -> NewRoomForm { try await get("/api/rooms/new") }
-
-  public func startDirect(with userIds: [UserID]) async throws -> Room {
-    let answer: StartedDirect = try await write("POST", "/api/directs", json: ["userIds": userIds])
-    return answer.room
-  }
-
-  public func createRoom(name: String, open: Bool = true) async throws -> Room {
-    struct NewRoom: Encodable { let name: String; let kind: String; let memberIds: [String]? }
-    let answer: SavedRoom = try await write("POST", "/api/rooms", json: NewRoom(name: name, kind: open ? "open" : "closed", memberIds: open ? nil : []))
-    return answer.room
-  }
-
-  public func setInvolvement(_ involvement: Involvement, in room: RoomID) async throws {
-    try await perform("PUT", "/api/rooms/\(room)/involvement", json: ["involvement": involvement.rawValue])
-  }
-
-  public func setFavorite(_ favorite: Bool, room: RoomID) async throws {
-    try await perform("PUT", "/api/rooms/\(room)/favorite", json: ["favorite": favorite])
-  }
-
   /** The bytes at `path` on this instance, such as a file's preview or someone's avatar, with the session that may see them. */
   public func data(at path: String) async throws -> Data {
     var request = request(path)
-    request.setValue("*/*", forHTTPHeaderField: "Accept")
+    request.setValue(Self.anyType, forHTTPHeaderField: "Accept")
     return try await send(request).0
   }
 
   public struct Empty: Codable, Sendable {}
-  private struct Problem: Decodable { let error: String }
-  private struct SignedIn: Decodable { let user: Me }
-  private struct SavedRoom: Decodable { let room: Room }
+  struct UserAnswer: Decodable { let user: Me }
+  struct RoomAnswer: Decodable { let room: Room }
+}
+
+/** A `multipart/form-data` body, as the web's `FormData` sends one. */
+public struct MultipartForm: Sendable {
+  public let boundary = "ircX-\(UUID().uuidString)"
+  public private(set) var body = Data()
+
+  public init() {}
+
+  public mutating func add(_ name: String, text: String) {
+    body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(text)\r\n".utf8))
+  }
+
+  public mutating func add(_ name: String, file data: Data, fileName: String, contentType: String) {
+    let escaped = fileName.replacingOccurrences(of: "\"", with: "%22").replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
+    body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"; filename=\"\(escaped)\"\r\nContent-Type: \(contentType)\r\n\r\n".utf8))
+    body.append(data)
+    body.append(Data("\r\n".utf8))
+  }
+
+  /** The form finished, ready to send. */
+  public func finished() -> MultipartForm {
+    var form = self
+    form.body.append(Data("--\(boundary)--\r\n".utf8))
+    return form
+  }
+
+  /** `photoForm`: `user` as JSON when there are fields, the photo as `avatar`, and its variant. */
+  public static func photo(_ photo: ChosenPhoto, user fields: (any Encodable)? = nil) throws -> MultipartForm {
+    var form = MultipartForm()
+    if let fields { form.add("user", text: String(decoding: try JSONEncoder().encode(fields), as: UTF8.self)) }
+    form.add("avatar", file: photo.data, fileName: photo.fileName, contentType: photo.contentType)
+    if let variant = photo.variant { form.add("variant", file: variant, fileName: "variant", contentType: photo.variantContentType) }
+    return form.finished()
+  }
 }
 
 /** Reading Ember's session cookie and sign-in links. */
@@ -242,7 +313,7 @@ public enum SessionCookie {
 
   public static func token(named name: String, inHeader header: String) -> String? {
     for cookie in header.components(separatedBy: ",") {
-      let pair = cookie.split(separator: ";", maxSplits: 1).first.map(String.init) ?? ""
+      guard let pair = cookie.split(separator: ";", maxSplits: 1).first else { continue }
       let parts = pair.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
       if parts.first == name {
         let value = parts.count > 1 ? parts[1] : ""
@@ -254,6 +325,11 @@ public enum SessionCookie {
 
   /** The transfer id in a sign-in link (`/session/transfers#token=<id>`), or a bare id. */
   public static func transferId(in link: String) -> String? {
+    token(in: link)
+  }
+
+  /** The token in a link's `#token=` (sign-in, invitation and email links), or a bare token. */
+  public static func token(in link: String) -> String? {
     let text = link.trimmingCharacters(in: .whitespacesAndNewlines)
     if let range = text.range(of: "token=") {
       let id = text[range.upperBound...].prefix { $0 != "&" }

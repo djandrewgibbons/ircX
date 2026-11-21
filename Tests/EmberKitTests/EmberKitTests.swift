@@ -21,11 +21,11 @@ final class FrameTests: XCTestCase {
 
   func testUnknownFramesDecode() throws {
     XCTAssertEqual(try ServerFrame.decode(#"{"type":"something.new","x":1}"#), .unknown("something.new"))
-    XCTAssertEqual(try WorkspaceFrame.decode(#"{"type":"room.unread","roomId":"general"}"#), .roomUnread("general"))
+    XCTAssertEqual(try WorkspaceFrame.decode(#"{"type":"something.new"}"#), .unknown("something.new"))
   }
 
   func testDecodesSidebarRoomsFlat() throws {
-    let json = #"{"rooms":[{"id":"general","kind":"open","name":"general","icon":null,"unread":true,"involvement":"mentions"},{"id":"d1","kind":"direct","members":[\#(ada),{"id":"0000000000000bob","name":"Bob"}],"activeAt":"2026-11-11T02:00:00.000Z","unread":false,"involvement":"everything"}],"favorites":{"rooms":[],"version":0},"sharedOrder":[],"invitation":null,"suggestions":[],"huddles":{}}"#
+    let json = #"{"rooms":[{"id":"general","kind":"open","name":"general","icon":null,"unread":true,"involvement":"mentions"},{"id":"d1","kind":"direct","members":[\#(ada),{"id":"0000000000000bob","name":"Bob"}],"activeAt":"2026-11-11T02:00:00.000Z","unread":false,"involvement":"everything"}],"favorites":{"rooms":[],"version":0},"sharedOrder":[],"invitation":null,"huddles":{},"blocks":{"userIds":[],"version":0}}"#
     let sidebar = try JSONDecoder().decode(Sidebar.self, from: Data(json.utf8))
     XCTAssertEqual(sidebar.rooms.count, 2)
     XCTAssertTrue(sidebar.rooms[0].unread)
@@ -39,7 +39,7 @@ final class FrameTests: XCTestCase {
 
   func testTimelineConfirmsPendingAndKeepsOrder() throws {
     var timeline = Timeline()
-    timeline.apply(try ServerFrame.decode(#"{"type":"welcome","you":\#(ada),"present":[],"seq":1,"messages":[\#(message("m1"))],"hasMore":false}"#))
+    timeline.apply(try ServerFrame.decode(#"{"type":"welcome","you":\#(ada),"present":[],"seq":1,"messages":[\#(message("m1"))],"hasMore":false,"hasNewer":false,"around":null}"#))
     let sent = try JSONDecoder().decode(Message.self, from: Data(message("pending", client: "c9", at: "2026-11-11T03:00:00.000Z").utf8))
     timeline.send(sent)
     XCTAssertEqual(timeline.lines.count, 2)
@@ -92,7 +92,7 @@ final class BodyTests: XCTestCase {
     XCTAssertEqual(InputCommand.parse("/me waves"), .me("waves"))
     XCTAssertEqual(InputCommand.parse("/join #design"), .join("design"))
     XCTAssertEqual(InputCommand.parse("/msg Bob hey there"), .msg(nick: "Bob", text: "hey there"))
-    XCTAssertEqual(InputCommand.parse("/query Bob"), .msg(nick: "Bob", text: nil))
+    XCTAssertEqual(InputCommand.parse("/query Bob"), .query(["Bob"]))
     XCTAssertEqual(InputCommand.parse("   "), nil)
   }
 
