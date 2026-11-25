@@ -1,0 +1,84 @@
+name: PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  claude:
+    if: &reviewable >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft &&
+      github.actor != 'dependabot[bot]' &&
+      !contains(github.event.pull_request.labels.*.name, 'no-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: { contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          claude_args: --allowedTools "Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+          prompt: "Review this pull request for bugs and security issues that would cause a real problem. Read git diff origin/${{ github.base_ref }}...HEAD and the surrounding code it touches. Check each candidate finding against the code before reporting it, and drop any you cannot support. Report every finding that remains, most serious first, each with: file and line, what goes wrong, severity (Critical, High, Medium or Low), and how likely it is to be a real problem in practice (High, Medium or Low) with one sentence of reasoning. Do not report style, formatting or missing tests. If there are no findings, say so."
+      - name: Post the review
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          marker='<!-- pr-review:claude -->'
+          msg="$(jq -r '[.[] | select(.type == "result")] | last | .result' "$EXECUTION_FILE")"
+          body="$marker"$'\n'"## Claude review of ${SHA:0:7}"$'\n\n'"$msg"
+          id="$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | tail -n1)"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" --silent
+          else
+            gh pr comment "$PR" --repo "$REPO" --body "$body"
+          fi
+
+  codex:
+    if: *reviewable
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: { contents: read, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - id: review
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: read-only
+          prompt: "Review this pull request for bugs and security issues that would cause a real problem. Read git diff origin/${{ github.base_ref }}...HEAD and the surrounding code it touches. Check each candidate finding against the code before reporting it, and drop any you cannot support. Report every finding that remains, most serious first, each with: file and line, what goes wrong, severity (Critical, High, Medium or Low), and how likely it is to be a real problem in practice (High, Medium or Low) with one sentence of reasoning. Do not report style, formatting or missing tests. If there are no findings, say so."
+      - name: Post the review
+        env:
+          MSG: ${{ steps.review.outputs.final-message }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          marker='<!-- pr-review:codex -->'
+          body="$marker"$'\n'"## Codex review of ${SHA:0:7}"$'\n\n'"$MSG"
+          id="$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | tail -n1)"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" --silent
+          else
+            gh pr comment "$PR" --repo "$REPO" --body "$body"
+          fi
