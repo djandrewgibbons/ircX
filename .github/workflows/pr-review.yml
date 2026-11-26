@@ -1,3 +1,5 @@
+# The one source of every repository's .github/workflows/pr-review.yml.
+# Develop's Set Up Repositories workflow copies it; change it here, never in a repository.
 name: PR Review
 
 on:
@@ -19,20 +21,29 @@ jobs:
       !contains(github.event.pull_request.labels.*.name, 'no-review')
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions: { contents: read, pull-requests: write }
+    # id-token: the job trades its GitHub identity token for a short-lived Anthropic one.
+    permissions: { contents: read, pull-requests: write, id-token: write }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with: { fetch-depth: 0, persist-credentials: false }
       - id: review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@4411a9e9b0283becf4b924f7bce360fd7756c78c # v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Identifiers, not secrets. An API key set here would win over federation.
+          anthropic_federation_rule_id: fdrl_019QDPgXZ4tp1yYVbPHJ5UTb
+          anthropic_organization_id: ef8cbb39-4843-4296-ba4e-9341e54270fa
+          anthropic_service_account_id: svac_015xZyJYJdqgX9cwaRzS1K17
           github_token: ${{ github.token }}
-          claude_args: --allowedTools "Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+          # dontAsk denies every tool not listed; the action otherwise defaults to auto mode, which can approve edits.
+          claude_args: --permission-mode dontAsk --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
           prompt: "Review this pull request for bugs and security issues that would cause a real problem. Read git diff origin/${{ github.base_ref }}...HEAD and the surrounding code it touches. Check each candidate finding against the code before reporting it, and drop any you cannot support. Report every finding that remains, most serious first, each with: file and line, what goes wrong, severity (Critical, High, Medium or Low), and how likely it is to be a real problem in practice (High, Medium or Low) with one sentence of reasoning. Do not report style, formatting or missing tests. If there are no findings, say so."
       - name: Post the review
+        # Also after a failed review, so its error reaches the pull request.
+        if: ${{ !cancelled() }}
         env:
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          OUTCOME: ${{ steps.review.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
@@ -40,8 +51,19 @@ jobs:
         run: |
           set -euo pipefail
           marker='<!-- pr-review:claude -->'
-          msg="$(jq -r '[.[] | select(.type == "result")] | last | .result' "$EXECUTION_FILE")"
-          body="$marker"$'\n'"## Claude review of ${SHA:0:7}"$'\n\n'"$msg"
+          if [ "$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)" != "$SHA" ]; then
+            echo "${SHA:0:7} is no longer the pull request head; not posting"; exit 0
+          fi
+          msg=""
+          if [ -s "$EXECUTION_FILE" ]; then
+            msg="$(jq -r '[.[] | select(.type == "result")] | last | .result // empty' "$EXECUTION_FILE")"
+          fi
+          heading="Claude review of ${SHA:0:7}"
+          if [ "$OUTCOME" != "success" ] || [ -z "$msg" ]; then
+            heading="$heading failed"
+            msg="${msg:+$msg$'\n\n'}The review step ended as $OUTCOME: $RUN_URL"
+          fi
+          body="$marker"$'\n'"## $heading"$'\n\n'"$msg"
           id="$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | tail -n1)"
           if [ -n "$id" ]; then
@@ -54,19 +76,69 @@ jobs:
     if: *reviewable
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions: { contents: read, pull-requests: write }
+    permissions: { contents: read, pull-requests: write, id-token: write }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with: { node-version: '24' }
+      - name: Install the OIDC-capable Responses proxy
+        run: npm install -g --ignore-scripts @openai/codex-responses-api-proxy@0.172.0
+      - name: Start the federated Responses proxy
+        env:
+          OPENAI_WIF_AUDIENCE: https://api.openai.com/v1
+          OPENAI_IDENTITY_PROVIDER_ID: idp_f192bb5b02bc6b774fe31979
+          OPENAI_SERVICE_ACCOUNT_ID: user-c52ylqCSKhXSNWbervgTgdrF
+        run: |
+          set -euo pipefail
+          : "${OPENAI_IDENTITY_PROVIDER_ID:?Missing OPENAI_IDENTITY_PROVIDER_ID in workflow}"
+          : "${OPENAI_SERVICE_ACCOUNT_ID:?Missing OPENAI_SERVICE_ACCOUNT_ID in workflow}"
+          : "${ACTIONS_ID_TOKEN_REQUEST_URL:?The job needs id-token: write}"
+          : "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?The job needs id-token: write}"
+          codex_home="$RUNNER_TEMP/codex-wif-home"
+          mkdir -p "$codex_home"
+          server_info="$codex_home/$GITHUB_RUN_ID.json"
+          printenv ACTIONS_ID_TOKEN_REQUEST_TOKEN | (
+            exec env -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL -u NODE_OPTIONS \
+              NODE_OPTIONS=--disable-sigusr1 codex-responses-api-proxy \
+              --github-oidc \
+              --oidc-audience "$OPENAI_WIF_AUDIENCE" \
+              --identity-provider-id "$OPENAI_IDENTITY_PROVIDER_ID" \
+              --service-account-id "$OPENAI_SERVICE_ACCOUNT_ID" \
+              --github-oidc-request-url "$ACTIONS_ID_TOKEN_REQUEST_URL" \
+              --http-shutdown --server-info "$server_info"
+          ) &
+          for _ in {1..30}; do
+            if [ -s "$server_info" ]; then break; fi
+            sleep 1
+          done
+          test -s "$server_info" || { echo 'Federated proxy did not start; check the OpenAI mapping and Actions variables' >&2; exit 1; }
+          proxy_port="$(jq -er '.port' "$server_info")"
+          cat > "$codex_home/config.toml" <<EOF
+          model_provider = "codex-wif-proxy"
+          [model_providers.codex-wif-proxy]
+          name = "Codex WIF proxy"
+          base_url = "http://127.0.0.1:$proxy_port/v1"
+          wire_api = "responses"
+          EOF
+          sudo chown root:root "$server_info" "$codex_home/config.toml"
+          sudo chmod 444 "$server_info" "$codex_home/config.toml"
       - id: review
-        uses: openai/codex-action@v1
+        uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1
+        env:
+          ACTIONS_ID_TOKEN_REQUEST_URL: ''
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ''
         with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          codex-home: ${{ runner.temp }}/codex-wif-home
           sandbox: read-only
           prompt: "Review this pull request for bugs and security issues that would cause a real problem. Read git diff origin/${{ github.base_ref }}...HEAD and the surrounding code it touches. Check each candidate finding against the code before reporting it, and drop any you cannot support. Report every finding that remains, most serious first, each with: file and line, what goes wrong, severity (Critical, High, Medium or Low), and how likely it is to be a real problem in practice (High, Medium or Low) with one sentence of reasoning. Do not report style, formatting or missing tests. If there are no findings, say so."
       - name: Post the review
+        # Also after a failed review, so the pull request says it failed.
+        if: ${{ !cancelled() }}
         env:
           MSG: ${{ steps.review.outputs.final-message }}
+          OUTCOME: ${{ steps.review.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
@@ -74,7 +146,15 @@ jobs:
         run: |
           set -euo pipefail
           marker='<!-- pr-review:codex -->'
-          body="$marker"$'\n'"## Codex review of ${SHA:0:7}"$'\n\n'"$MSG"
+          if [ "$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)" != "$SHA" ]; then
+            echo "${SHA:0:7} is no longer the pull request head; not posting"; exit 0
+          fi
+          heading="Codex review of ${SHA:0:7}"
+          if [ "$OUTCOME" != "success" ]; then
+            heading="$heading failed"
+            MSG="$MSG"$'\n\n'"The review step ended as $OUTCOME: $RUN_URL"
+          fi
+          body="$marker"$'\n'"## $heading"$'\n\n'"$MSG"
           id="$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | tail -n1)"
           if [ -n "$id" ]; then
