@@ -36,7 +36,7 @@ jobs:
           github_token: ${{ github.token }}
           # dontAsk denies every tool not listed; the action otherwise defaults to auto mode, which can approve edits.
           claude_args: --permission-mode dontAsk --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
-          prompt: "Review this pull request for bugs and security issues that would cause a real problem. Read git diff origin/${{ github.base_ref }}...HEAD and the surrounding code it touches. Check each candidate finding against the code before reporting it, and drop any you cannot support. Report every finding that remains, most serious first, each with: file and line, what goes wrong, severity (Critical, High, Medium or Low), and how likely it is to be a real problem in practice (High, Medium or Low) with one sentence of reasoning. Do not report style, formatting or missing tests. If there are no findings, say so."
+          prompt: "Review this pull request for bugs and security issues that would cause a real problem. Read git diff origin/${{ github.base_ref }}...HEAD and the surrounding code it touches. Check each candidate finding against the code before reporting it, and drop any you cannot support. Report every finding that remains, most serious first, each with: file and line, what goes wrong, severity (Critical, High, Medium or Low), and how likely it is to be a real problem in practice (High, Medium or Low) with one sentence of reasoning. For security, check secrets, injection, authentication and authorization, subprocess and shell use, and file paths or URLs built from outside input. Do not report style, formatting or missing tests. If there are no findings, say so. End with one final line, exactly VERDICT: FAIL if any finding is Critical or High severity, otherwise exactly VERDICT: PASS."
       - name: Post the review
         # Also after a failed review, so its error reaches the pull request.
         if: ${{ !cancelled() }}
@@ -70,6 +70,11 @@ jobs:
             gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" --silent
           else
             gh pr comment "$PR" --repo "$REPO" --body "$body"
+          fi
+          # The check fails unless the review's last verdict line is a pass.
+          verdict="$(printf '%s\n' "$msg" | grep -Eo 'VERDICT: (PASS|FAIL)' | tail -n1 || true)"
+          if [ "$verdict" != "VERDICT: PASS" ]; then
+            echo "Review verdict: ${verdict:-none}" >&2; exit 1
           fi
 
   codex:
@@ -131,7 +136,7 @@ jobs:
         with:
           codex-home: ${{ runner.temp }}/codex-wif-home
           sandbox: read-only
-          prompt: "Review this pull request for bugs and security issues that would cause a real problem. Read git diff origin/${{ github.base_ref }}...HEAD and the surrounding code it touches. Check each candidate finding against the code before reporting it, and drop any you cannot support. Report every finding that remains, most serious first, each with: file and line, what goes wrong, severity (Critical, High, Medium or Low), and how likely it is to be a real problem in practice (High, Medium or Low) with one sentence of reasoning. Do not report style, formatting or missing tests. If there are no findings, say so."
+          prompt: "Review this pull request for bugs and security issues that would cause a real problem. Read git diff origin/${{ github.base_ref }}...HEAD and the surrounding code it touches. Check each candidate finding against the code before reporting it, and drop any you cannot support. Report every finding that remains, most serious first, each with: file and line, what goes wrong, severity (Critical, High, Medium or Low), and how likely it is to be a real problem in practice (High, Medium or Low) with one sentence of reasoning. For security, check secrets, injection, authentication and authorization, subprocess and shell use, and file paths or URLs built from outside input. Do not report style, formatting or missing tests. If there are no findings, say so. End with one final line, exactly VERDICT: FAIL if any finding is Critical or High severity, otherwise exactly VERDICT: PASS."
       - name: Post the review
         # Also after a failed review, so the pull request says it failed.
         if: ${{ !cancelled() }}
@@ -161,4 +166,9 @@ jobs:
             gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" --silent
           else
             gh pr comment "$PR" --repo "$REPO" --body "$body"
+          fi
+          # The check fails unless the review's last verdict line is a pass.
+          verdict="$(printf '%s\n' "$MSG" | grep -Eo 'VERDICT: (PASS|FAIL)' | tail -n1 || true)"
+          if [ "$verdict" != "VERDICT: PASS" ]; then
+            echo "Review verdict: ${verdict:-none}" >&2; exit 1
           fi
